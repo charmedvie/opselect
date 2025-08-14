@@ -37,6 +37,7 @@ export default function App() {
           onChange={(e) => setSymbol(e.target.value.toUpperCase())}
           placeholder="Enter ticker (e.g., AAPL)"
           style={{ textTransform: "uppercase", padding: 8 }}
+          onKeyDown={(e) => e.key === "Enter" && fetchPrice()}
         />
         <button onClick={fetchPrice} disabled={loading || !symbol.trim()}>
           {loading ? "Loading…" : "Get Price"}
