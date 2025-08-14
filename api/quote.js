@@ -1,4 +1,4 @@
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -8,6 +8,7 @@ module.exports = async (req, res) => {
   if (!symbol) return res.status(400).json({ error: 'Missing symbol' });
 
   try {
+    // Use v8/chart (reliable); normalize to { price, currency }
     const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1m`;
     const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } });
     const text = await r.text();
@@ -33,4 +34,4 @@ module.exports = async (req, res) => {
   } catch (e) {
     return res.status(500).json({ error: e?.message || 'proxy error' });
   }
-};
+}
