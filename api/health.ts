@@ -1,10 +1,8 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-
-export default function handler(req: VercelRequest, res: VercelResponse) {
+module.exports = (req, res) => {
   res.setHeader('Content-Type', 'application/json');
-  return res.status(200).json({
+  res.status(200).send(JSON.stringify({
     ok: true,
-    runtime: process.versions.node,
-    now: new Date().toISOString(),
-  });
-}
+    node: process.versions.node,
+    now: new Date().toISOString()
+  }));
+};
