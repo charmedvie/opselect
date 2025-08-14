@@ -2,6 +2,11 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') return res.status(204).end();
+
   const symbol = (req.query.symbol as string)?.trim();
   if (!symbol) return res.status(400).json({ error: 'Missing symbol' });
 
@@ -10,13 +15,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const r = await fetch(url, {
       headers: { 'user-agent': 'Mozilla/5.0 (compatible; opselect/1.0)' },
     });
+
+    const text = await r.text();
     if (!r.ok) {
-      const txt = await r.text();
-      return res.status(r.status).send(txt);
+      return res.status(r.status).send(text.slice(0, 500));
     }
-    const data = await r.json();
+
     res.setHeader('Cache-Control', 's-maxage=15, stale-while-revalidate=60');
-    return res.status(200).json(data);
+    return res.status(200).send(text); // pass through JSON string
   } catch (e: any) {
     return res.status(500).json({ error: e?.message || 'proxy error' });
   }
