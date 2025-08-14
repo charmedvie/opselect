@@ -22,7 +22,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     res.setHeader('Cache-Control', 's-maxage=15, stale-while-revalidate=60');
-    return res.status(200).send(text); // pass through JSON string
+    return res.status(200).send(text);
   } catch (e: any) {
     return res.status(500).json({ error: e?.message || 'proxy error' });
   }
