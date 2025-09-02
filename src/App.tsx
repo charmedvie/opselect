@@ -8,9 +8,22 @@ type OptionSide = {
   bid?: number | null;
   ask?: number | null;
   delta?: number | null;
-  iv?: number | null;
+  iv?: number | null; // percent in our app
 };
 type ExpirySlice = { expiry: string; options: OptionSide[] };
+
+type YieldRow = {
+  strike: number;
+  bid: number;
+  yieldPct: number;
+  probOTM: number; // percent
+  delta?: number | null;
+  iv?: number | null;
+  expiry: string;
+  side: "call" | "put";
+};
+
+const DTE_BUCKETS = [7, 14, 21, 30] as const;
 
 export default function App() {
   const [symbol, setSymbol] = useState("");
@@ -24,6 +37,61 @@ export default function App() {
   const [expiries, setExpiries] = useState<ExpirySlice[]>([]);
   const [uPrice, setUPrice] = useState<number | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
+
+  // computed “top yields” per bucket
+  const topYields = useMemo(() => {
+    if (!expiries.length || uPrice == null) return null;
+
+    // precompute expiry DTE
+    const now = Date.now();
+    const expWithDte = expiries.map((ex) => ({
+      ex,
+      dte: Math.max(0, Math.ceil((Date.parse(ex.expiry) - now) / (1000 * 60 * 60 * 24))),
+    }));
+
+    const result: Record<number, { calls: YieldRow[]; puts: YieldRow[] }> = {};
+
+    for (const target of DTE_BUCKETS) {
+      // pick the expiry with DTE closest to the target
+      const nearest = expWithDte
+        .slice()
+        .sort((a, b) => Math.abs(a.dte - target) - Math.abs(b.dte - target))[0];
+      if (!nearest) continue;
+
+      const calls: YieldRow[] = [];
+      const puts: YieldRow[] = [];
+
+      for (const o of nearest.ex.options) {
+        if (typeof o.bid !== "number" || typeof o.strike !== "number" || o.strike <= 0) continue;
+        // need IV to estimate probability; skip if missing
+        if (typeof o.iv !== "number" || o.iv <= 0) continue;
+
+        const T = Math.max(1 / 365, nearest.dte / 365); // years, min 1 day for sanity
+        const prob = probOTM(o.type, uPrice, o.strike, o.iv / 100, T);
+        if (prob == null) continue;
+
+        const y = o.bid / o.strike; // yield
+        const row: YieldRow = {
+          strike: o.strike,
+          bid: o.bid,
+          yieldPct: y * 100,
+          probOTM: prob * 100,
+          delta: o.delta,
+          iv: o.iv,
+          expiry: nearest.ex.expiry,
+          side: o.type,
+        };
+        if (o.type === "call") calls.push(row);
+        else puts.push(row);
+      }
+
+      const topCalls = calls.sort((a, b) => b.yieldPct - a.yieldPct).slice(0, 5);
+      const topPuts = puts.sort((a, b) => b.yieldPct - a.yieldPct).slice(0, 5);
+
+      result[target] = { calls: topCalls, puts: topPuts };
+    }
+    return result;
+  }, [expiries, uPrice]);
 
   const fetchPrice = async () => {
     setErr("");
@@ -113,37 +181,107 @@ export default function App() {
   }, [activeExpiry]);
 
   return (
-    <div style={{ padding: 24, fontFamily: "system-ui, sans-serif", maxWidth: 1100, margin: "0 auto" }}>
+    <div style={{ padding: 24, fontFamily: "system-ui, sans-serif", maxWidth: 1200, margin: "0 auto" }}>
       <h1>Stock Price Lookup</h1>
 
-      {/* Controls */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <input
-          value={symbol}
-          onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-          onKeyDown={(e) => e.key === "Enter" && fetchPrice()}
-          placeholder="Enter ticker (e.g., AAPL)"
-          style={{ textTransform: "uppercase", padding: 8, minWidth: 220 }}
-        />
-        <button onClick={fetchPrice} disabled={loading || !symbol.trim()}>
-          {loading ? "Loading…" : "Get Price"}
-        </button>
-        <button onClick={fetchOptionsChain} disabled={chainLoading || !symbol.trim()}>
-          {chainLoading ? "Loading chain…" : "Get Options Chain"}
-        </button>
+      {/* Controls + Top Yields header row */}
+      <div className="header-row">
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input
+            value={symbol}
+            onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+            onKeyDown={(e) => e.key === "Enter" && fetchPrice()}
+            placeholder="Enter ticker (e.g., AAPL)"
+            style={{ textTransform: "uppercase", padding: 8, minWidth: 220 }}
+          />
+          <button onClick={fetchPrice} disabled={loading || !symbol.trim()}>
+            {loading ? "Loading…" : "Get Price"}
+          </button>
+          <button onClick={fetchOptionsChain} disabled={chainLoading || !symbol.trim()}>
+            {chainLoading ? "Loading chain…" : "Get Options Chain"}
+          </button>
+        </div>
+
+        {/* Top Yields panel */}
+        {topYields && uPrice != null && (
+          <div className="yields-panel">
+            <div className="y-meta">
+              Underlier: <strong>{uPrice}</strong> &nbsp;•&nbsp; Yield = <code>bid / strike</code>
+            </div>
+            <div className="yields-grid">
+              {DTE_BUCKETS.map((d) => {
+                const bucket = topYields[d];
+                if (!bucket) return null;
+                return (
+                  <div key={d} className="yield-card">
+                    <h4>
+                      <span className="y-badge">{d} DTE</span>
+                    </h4>
+                    <table className="yield-table">
+                      <thead>
+                        <tr>
+                          <th>Top Calls</th>
+                          <th>Bid</th>
+                          <th>Yield</th>
+                          <th>Prob OTM</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {bucket.calls.length ? (
+                          bucket.calls.map((r) => (
+                            <tr key={`c-${d}-${r.strike}`}>
+                              <td>{r.strike}</td>
+                              <td>{fmtNum(r.bid)}</td>
+                              <td>{fmtPct(r.yieldPct)}</td>
+                              <td>{fmtPct(r.probOTM)}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr><td colSpan={4} style={{ textAlign: "center" }}>—</td></tr>
+                        )}
+                      </tbody>
+                      <thead>
+                        <tr>
+                          <th style={{ paddingTop: 10 }}>Top Puts</th>
+                          <th style={{ paddingTop: 10 }}>Bid</th>
+                          <th style={{ paddingTop: 10 }}>Yield</th>
+                          <th style={{ paddingTop: 10 }}>Prob OTM</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {bucket.puts.length ? (
+                          bucket.puts.map((r) => (
+                            <tr key={`p-${d}-${r.strike}`}>
+                              <td>{r.strike}</td>
+                              <td>{fmtNum(r.bid)}</td>
+                              <td>{fmtPct(r.yieldPct)}</td>
+                              <td>{fmtPct(r.probOTM)}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr><td colSpan={4} style={{ textAlign: "center" }}>—</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Price */}
+      {/* Price + chain errors below header row */}
       {err && <p style={{ color: "crimson", marginTop: 8 }}>{err}</p>}
       {price !== null && !err && (
-        <p style={{ marginTop: 12 }}>
+        <p style={{ marginTop: 8 }}>
           Current Price for <strong>{symbol}</strong>: {currency ? `${currency} ` : "$"}
           {price}
         </p>
       )}
-      {chainErr && <p style={{ color: "crimson", marginTop: 12 }}>{chainErr}</p>}
+      {chainErr && <p style={{ color: "crimson", marginTop: 8 }}>{chainErr}</p>}
 
-      {/* Chain */}
+      {/* Full options chain lower on the page to make room */}
       {expiries.length > 0 && (
         <div style={{ marginTop: 16 }}>
           {/* Tabs */}
@@ -168,14 +306,14 @@ export default function App() {
             ))}
           </div>
 
-          {/* Underlier */}
+          {/* Underlier ref */}
           {uPrice !== null && (
             <div style={{ marginTop: 8, opacity: 0.7 }}>
               Underlier: <strong>{uPrice}</strong>
             </div>
           )}
 
-          {/* Table inside scroll container so sticky works */}
+          {/* Chain table */}
           <div className="options-wrap">
             <div className="scroll-xy">
               <table className="options-table">
@@ -192,7 +330,6 @@ export default function App() {
                     <th>Ask</th>
                     <th>Bid</th>
                     <th>Last</th>
-                    {/* Strike header sticks horizontally too */}
                     <th className="strike-sticky">-</th>
                     {/* Puts: Last, Bid, Ask, Delta, IV */}
                     <th>Last</th>
@@ -222,19 +359,12 @@ export default function App() {
 
                     return (
                       <tr key={r.strike}>
-                        {/* Calls (IV, Delta, Ask, Bid, Last) */}
                         <td className={callClass}>{fmtPct(c?.iv)}</td>
                         <td className={callClass}>{fmtDelta(c?.delta)}</td>
                         <td className={callClass}>{fmtNum(c?.ask)}</td>
                         <td className={callClass}>{fmtNum(c?.bid)}</td>
                         <td className={callClass}>{fmtNum(c?.last)}</td>
-
-                        {/* Strike (sticky + underline if at-underlier) */}
-                        <td className={`strike-sticky ${isAt ? "strike-underlier" : ""}`}>
-                          {r.strike}
-                        </td>
-
-                        {/* Puts (Last, Bid, Ask, Delta, IV) */}
+                        <td className={`strike-sticky ${isAt ? "strike-underlier" : ""}`}>{r.strike}</td>
                         <td className={putClass}>{fmtNum(p?.last)}</td>
                         <td className={putClass}>{fmtNum(p?.bid)}</td>
                         <td className={putClass}>{fmtNum(p?.ask)}</td>
@@ -254,7 +384,6 @@ export default function App() {
               </table>
             </div>
           </div>
-
         </div>
       )}
     </div>
@@ -286,4 +415,43 @@ function fmtDelta(n?: number | null) {
 function round(n: number, dp: number) {
   const p = 10 ** dp;
   return Math.round(n * p) / p;
+}
+
+/* ----- Black-Scholes probability of finishing OTM ----- */
+/* For calls:  P(OTM) = N(-d2)
+   For puts:   P(OTM) = N(d2)
+   where d2 = (ln(S/K) + (r - 0.5*σ^2)T) / (σ√T)
+   We take r ≈ 0 for simplicity (short-dated). */
+function probOTM(
+  side: "call" | "put",
+  S: number,
+  K: number,
+  ivFrac: number, // IV as fraction (e.g., 0.25)
+  Tyears: number,
+  r = 0
+): number | null {
+  if (![S, K, ivFrac, Tyears].every((v) => typeof v === "number" && v > 0)) return null;
+  const sigma = ivFrac;
+  const d2 = (Math.log(S / K) + (r - 0.5 * sigma * sigma) * Tyears) / (sigma * Math.sqrt(Tyears));
+  const Nd2 = normCdf(d2);
+  return side === "call" ? normCdf(-d2) : Nd2;
+}
+
+function normCdf(x: number) {
+  return 0.5 * (1 + erf(x / Math.SQRT2));
+}
+function erf(x: number) {
+  const a1 = 0.254829592,
+    a2 = -0.284496736,
+    a3 = 1.421413741,
+    a4 = -1.453152027,
+    a5 = 1.061405429,
+    p = 0.3275911;
+  const sign = x < 0 ? -1 : 1;
+  const ax = Math.abs(x);
+  const t = 1 / (1 + p * ax);
+  const y =
+    1 -
+    (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t) * Math.exp(-ax * ax);
+  return sign * y;
 }
