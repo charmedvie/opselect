@@ -40,3 +40,48 @@
 .read-the-docs {
   color: #888;
 }
+
+/* ----------------------------- */
+/*   Options Chain Table Styles  */
+/* ----------------------------- */
+.options-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+}
+.options-table th,
+.options-table td {
+  text-align: center;
+  padding: 8px 6px;
+  border-bottom: 1px solid #f1f5f9;
+  white-space: nowrap;
+}
+
+.options-table thead th {
+  background: #f9fafb;
+  padding: 10px 8px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.options-table tbody tr:hover {
+  background-color: #f1f5f9;
+  cursor: pointer;
+}
+
+.call-itm {
+  background-color: #cce0ff; /* darker pastel blue */
+}
+.call-otm {
+  background-color: #e6f0ff; /* lighter pastel blue */
+}
+.put-itm {
+  background-color: #ffd6eb; /* darker pastel pink */
+}
+.put-otm {
+  background-color: #ffe6f0; /* lighter pastel pink */
+}
+
+.strike-underlier {
+  font-weight: 700;
+  border-top: 2px solid #111;
+}
