@@ -1,6 +1,6 @@
 // api/options.js
 export default async function handler(req, res) {
-  // --- CORS headers (same as quote.js) ---
+  // CORS headers (same as quote.js)
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -9,10 +9,10 @@ export default async function handler(req, res) {
   const symbol = String(req.query.symbol || "").trim().toUpperCase();
   if (!symbol) return res.status(400).json({ error: "Missing symbol" });
 
-  const apiKey = "GYGVXQFIDN0ROUE9"; // your Alpha Vantage key
-  const url = `https://www.alphavantage.co/query?function=OPTION_CHAIN&symbol=${encodeURIComponent(
+  const apiKey = "jRU3AOMqa5zoUiXUKIw_2JkLVCIZ9ST9"; // Polygon key
+  const url = `https://api.polygon.io/v3/snapshot/options/${encodeURIComponent(
     symbol
-  )}&apikey=${apiKey}`;
+  )}?apiKey=${apiKey}`;
 
   try {
     const r = await fetch(url);
@@ -21,50 +21,31 @@ export default async function handler(req, res) {
 
     const j = JSON.parse(text);
 
-    // Error case (Alpha Vantage throttling or bad symbol)
-    if (!j || !j.optionChain) {
-      return res.status(502).json({ error: j?.Note || "No options data" });
+    if (!j || !Array.isArray(j.results)) {
+      return res.status(502).json({ error: j?.error || "No options data" });
     }
 
-    const uPrice = j.optionChain.underlying_price ?? null;
+    const uPrice = j.underlying_asset?.price ?? null;
+    const byExpiry = new Map();
+
+    for (const opt of j.results) {
+      const exp = opt.details.expiration_date;
+      if (!byExpiry.has(exp)) byExpiry.set(exp, []);
+      byExpiry.get(exp).push({
+        strike: opt.details.strike_price,
+        type: opt.details.contract_type.toLowerCase(), // "call" | "put"
+        last: num(opt.last_quote?.p),
+        bid: num(opt.last_quote?.b),
+        ask: num(opt.last_quote?.a),
+        delta: num(opt.greeks?.delta),
+        iv: num(opt.greeks?.iv ? opt.greeks.iv * 100 : null), // percent
+      });
+    }
+
+    // Convert map to array, trim ~50 strikes per expiry
     const expiries = [];
-
-    // Each expiry has { calls:[], puts:[] }
-    for (const exp of j.optionChain.expiration_dates || []) {
-      const chain = j.optionChain.expirations[exp];
-      if (!chain) continue;
-
-      const calls = Array.isArray(chain.calls) ? chain.calls : [];
-      const puts = Array.isArray(chain.puts) ? chain.puts : [];
-
-      const mapped = [];
-
-      for (const c of calls) {
-        mapped.push({
-          strike: num(c.strikePrice),
-          type: "call",
-          last: num(c.lastPrice),
-          bid: num(c.bid),
-          ask: num(c.ask),
-          delta: num(c.delta),
-          iv: num(c.impliedVolatility ? c.impliedVolatility * 100 : null), // convert to %
-        });
-      }
-
-      for (const p of puts) {
-        mapped.push({
-          strike: num(p.strikePrice),
-          type: "put",
-          last: num(p.lastPrice),
-          bid: num(p.bid),
-          ask: num(p.ask),
-          delta: num(p.delta),
-          iv: num(p.impliedVolatility ? p.impliedVolatility * 100 : null),
-        });
-      }
-
-      // Center to ~50 strikes around underlying
-      const strikes = [...new Set(mapped.map((o) => o.strike))].sort((a, b) => a - b);
+    for (const [exp, arr] of byExpiry.entries()) {
+      const strikes = [...new Set(arr.map((o) => o.strike))].sort((a, b) => a - b);
       const center =
         typeof uPrice === "number"
           ? uPrice
@@ -73,9 +54,10 @@ export default async function handler(req, res) {
         (a, b) => Math.abs(a - center) - Math.abs(b - center)
       );
       const keep = new Set(sortedByDist.slice(0, 50));
-      const filtered = mapped.filter((o) => keep.has(o.strike));
-
-      expiries.push({ expiry: exp, options: filtered });
+      expiries.push({
+        expiry: exp,
+        options: arr.filter((o) => keep.has(o.strike)),
+      });
     }
 
     res.setHeader("Cache-Control", "s-maxage=15, stale-while-revalidate=60");
