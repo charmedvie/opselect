@@ -1,27 +1,26 @@
 import { useMemo, useState } from "react";
 
-/** ===== Expected /api/options response (example) =====
+/* ---------- Types returned by /api/options ---------- */
 type OptionSide = {
   strike: number;
   type: "call" | "put";
   last?: number | null;
   bid?: number | null;
   ask?: number | null;
-  delta?: number | null;      // e.g., 0.42 or -0.58
-  iv?: number | null;         // e.g., 24.3 for 24.3%
+  delta?: number | null; // e.g., 0.42 or -0.58
+  iv?: number | null;    // e.g., 24.3 for 24.3%
 };
 
 type ExpirySlice = {
-  expiry: string;             // ISO date or YYYY-MM-DD
-  options: OptionSide[];      // mixed calls & puts
+  expiry: string;        // ISO or YYYY-MM-DD
+  options: OptionSide[]; // mixed calls & puts
 };
 
-type OptionsChainResponse = {
+interface OptionsChainResponse {
   symbol: string;
-  underlierPrice?: number;    // optional, but helpful for centering 50 strikes
+  underlierPrice?: number;
   expiries: ExpirySlice[];
-};
-======================================================= */
+}
 
 export default function App() {
   const [symbol, setSymbol] = useState("");
@@ -77,29 +76,30 @@ export default function App() {
     }
 
     try {
-      // The backend should return ALL expiries; we’ll locally center to ~50 strikes if needed.
       const url = `/api/options?symbol=${encodeURIComponent(
         s
       )}&allExpiries=1&limit=50`;
+
       const res = await fetch(url);
       const text = await res.text();
       if (!res.ok) throw new Error(text);
-      const json: OptionsChainResponse = JSON.parse(text);
 
+      const json = JSON.parse(text) as OptionsChainResponse;
       if (!json?.expiries?.length) throw new Error("No options data found.");
+
       setUPrice(typeof json.underlierPrice === "number" ? json.underlierPrice : null);
 
-      // Ensure each expiry has calls + puts arrays and filter/center to ~50 strikes
-      const normalized = json.expiries.map((slice) => {
-        const calls = slice.options.filter((o) => o.type === "call");
-        const puts = slice.options.filter((o) => o.type === "put");
+      // Normalize + center to ~50 strikes for each expiry
+      const normalized: ExpirySlice[] = json.expiries.map((slice: ExpirySlice) => {
+        const calls: OptionSide[] = slice.options.filter((o: OptionSide) => o.type === "call");
+        const puts: OptionSide[] = slice.options.filter((o: OptionSide) => o.type === "put");
+
         const strikesSet = new Set<number>([
-          ...calls.map((c) => c.strike),
-          ...puts.map((p) => p.strike),
+          ...calls.map((c: OptionSide) => c.strike),
+          ...puts.map((p: OptionSide) => p.strike),
         ]);
         const strikes = Array.from(strikesSet).sort((a, b) => a - b);
 
-        // Pick ~50 strikes centered around underlier (or median if underlier missing)
         const center =
           typeof json.underlierPrice === "number"
             ? json.underlierPrice
@@ -108,10 +108,10 @@ export default function App() {
         const strikesByDistance = [...strikes].sort(
           (a, b) => Math.abs(a - center) - Math.abs(b - center)
         );
-        const targetStrikes = new Set(strikesByDistance.slice(0, 50).sort((a, b) => a - b));
+        const target = new Set<number>(strikesByDistance.slice(0, 50).sort((a, b) => a - b));
 
-        const filteredCalls = calls.filter((c) => targetStrikes.has(c.strike));
-        const filteredPuts = puts.filter((p) => targetStrikes.has(p.strike));
+        const filteredCalls = calls.filter((c: OptionSide) => target.has(c.strike));
+        const filteredPuts = puts.filter((p: OptionSide) => target.has(p.strike));
 
         return {
           expiry: slice.expiry,
@@ -127,15 +127,20 @@ export default function App() {
     }
   };
 
-  const activeExpiry = expiries[activeIdx];
+  const activeExpiry: ExpirySlice | undefined = expiries[activeIdx];
 
   // Build table rows: one row per strike, calls | strike | puts
   const rows = useMemo(() => {
-    if (!activeExpiry) return [];
+    if (!activeExpiry) return [] as {
+      strike: number;
+      call: OptionSide | null;
+      put: OptionSide | null;
+    }[];
+
     const callsByStrike = new Map<number, OptionSide>();
     const putsByStrike = new Map<number, OptionSide>();
 
-    for (const o of activeExpiry.options) {
+    for (const o of activeExpiry.options as OptionSide[]) {
       if (o.type === "call") callsByStrike.set(o.strike, o);
       else putsByStrike.set(o.strike, o);
     }
@@ -147,10 +152,10 @@ export default function App() {
       ])
     ).sort((a, b) => a - b);
 
-    return strikes.map((strike) => ({
+    return strikes.map((strike: number) => ({
       strike,
-      call: callsByStrike.get(strike) || null,
-      put: putsByStrike.get(strike) || null,
+      call: callsByStrike.get(strike) ?? null,
+      put: putsByStrike.get(strike) ?? null,
     }));
   }, [activeExpiry]);
 
@@ -191,7 +196,7 @@ export default function App() {
       {expiries.length > 0 && (
         <div style={{ marginTop: 16 }}>
           <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8 }}>
-            {expiries.map((ex, i) => (
+            {expiries.map((ex: ExpirySlice, i: number) => (
               <button
                 key={ex.expiry + i}
                 onClick={() => setActiveIdx(i)}
@@ -224,22 +229,17 @@ export default function App() {
               <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
                 <thead style={{ background: "#f9fafb" }}>
                   <tr>
-                    {/* Calls header */}
                     <th colSpan={5} style={thStyle}>Calls</th>
                     <th style={thStyle}>Strike</th>
-                    {/* Puts header */}
                     <th colSpan={5} style={thStyle}>Puts</th>
                   </tr>
                   <tr>
-                    {/* Calls cols */}
                     <th style={thStyle}>Last</th>
                     <th style={thStyle}>Bid</th>
                     <th style={thStyle}>Ask</th>
                     <th style={thStyle}>Delta</th>
                     <th style={thStyle}>IV %</th>
-                    {/* Strike */}
                     <th style={thStyle}>-</th>
-                    {/* Puts cols */}
                     <th style={thStyle}>IV %</th>
                     <th style={thStyle}>Delta</th>
                     <th style={thStyle}>Ask</th>
@@ -248,21 +248,17 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r) => {
-                    const c = r.call, p = r.put;
+                  {rows.map((r: { strike: number; call: OptionSide | null; put: OptionSide | null }) => {
+                    const c = r.call;
+                    const p = r.put;
                     return (
                       <tr key={r.strike}>
-                        {/* Calls */}
                         <td style={tdStyle}>{fmtNum(c?.last)}</td>
                         <td style={tdStyle}>{fmtNum(c?.bid)}</td>
                         <td style={tdStyle}>{fmtNum(c?.ask)}</td>
                         <td style={tdStyle}>{fmtDelta(c?.delta)}</td>
                         <td style={tdStyle}>{fmtPct(c?.iv)}</td>
-
-                        {/* Strike */}
                         <td style={{ ...tdStyle, fontWeight: 700 }}>{r.strike}</td>
-
-                        {/* Puts */}
                         <td style={tdStyle}>{fmtPct(p?.iv)}</td>
                         <td style={tdStyle}>{fmtDelta(p?.delta)}</td>
                         <td style={tdStyle}>{fmtNum(p?.ask)}</td>
@@ -292,21 +288,8 @@ export default function App() {
   );
 }
 
-/* ---------- Types ---------- */
-type OptionSide = {
-  strike: number;
-  type: "call" | "put";
-  last?: number | null;
-  bid?: number | null;
-  ask?: number | null;
-  delta?: number | null;
-  iv?: number | null;
-};
-type ExpirySlice = { expiry: string; options: OptionSide[] };
-
 /* ---------- Helpers / formatting ---------- */
 function formatExpiry(s: string) {
-  // Accept ISO or YYYY-MM-DD; display as, e.g., "19 Sep 2025"
   const t = Date.parse(s);
   if (!Number.isNaN(t)) {
     const d = new Date(t);
