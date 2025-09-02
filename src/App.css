@@ -1,4 +1,4 @@
-/* Vite starter styles (keep yours) */
+/* Vite starter styles (keep if you want) */
 #root {
   max-width: 1280px;
   margin: 0 auto;
@@ -9,9 +9,7 @@
 .logo:hover { filter: drop-shadow(0 0 2em #646cffaa); }
 .logo.react:hover { filter: drop-shadow(0 0 2em #61dafbaa); }
 @keyframes logo-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo { animation: logo-spin infinite 20s linear; }
-}
+@media (prefers-reduced-motion: no-preference) { a:nth-of-type(2) .logo { animation: logo-spin infinite 20s linear; } }
 .card { padding: 2em; }
 .read-the-docs { color: #888; }
 
@@ -26,16 +24,19 @@
   overflow: hidden;
 }
 
-.scroll-x {
-  overflow-x: auto;
+/* SCROLL CONTAINER for sticky header+column */
+.scroll-xy {
+  max-height: 70vh;          /* gives vertical scroll inside the box */
+  overflow: auto;            /* both x and y scrollbars as needed */
 }
 
-/* Use fixed column widths so the middle strike column can stick cleanly */
+/* fixed column widths so strike can stick cleanly */
 .options-table {
-  --col-w: 96px;                /* width per column */
+  --col-w: 104px;
   border-collapse: collapse;
   width: max(100%, calc(11 * var(--col-w)));
   font-size: 14px;
+  table-layout: fixed;
 }
 
 .options-table th,
@@ -47,29 +48,29 @@
   white-space: nowrap;
 }
 
-/* Sticky header rows on vertical scroll */
+/* Sticky header rows on vertical scroll (within .scroll-xy) */
 .options-table thead th {
   background: #f9fafb;
   padding: 10px 8px;
   border-bottom: 1px solid #e5e7eb;
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: 5;               /* above cells and sticky strike */
 }
 
-/* Full row hover highlight (override cell background with !important) */
+/* Full-row hover highlight (override cell bg) */
 .options-table tbody tr:hover td {
-  background-color: #f1f5f9 !important;
+  background-color: #eef2f7 !important;
   cursor: pointer;
 }
 
-/* Baby blue shades for calls */
-.call-itm { background-color: #bfdbfe; }  /* darker ITM */
-.call-otm { background-color: #dbeafe; }  /* lighter OTM */
+/* Baby blue (more distinct) for calls */
+.call-itm { background-color: #bae6fd; }  /* sky-200 */
+.call-otm { background-color: #e0f2fe; }  /* sky-100 */
 
 /* Pastel pink for puts */
-.put-itm  { background-color: #fbcfe8; }  /* darker ITM */
-.put-otm  { background-color: #fce7f3; }  /* lighter OTM */
+.put-itm  { background-color: #fbcfe8; }  /* pink-200 */
+.put-otm  { background-color: #fce7f3; }  /* pink-100 */
 
 /* Underlying strike marker (horizontal line) */
 .strike-underlier {
@@ -78,18 +79,20 @@
   background: #fff !important;
 }
 
-/* Sticky middle Strike column (both header and body) */
-.options-table thead .strike-sticky {
-  position: sticky;
-  left: calc(5 * var(--col-w)); /* after 5 call columns */
-  z-index: 3;
-  background: #f9fafb;
-  box-shadow: -1px 0 0 #e5e7eb, 1px 0 0 #e5e7eb; /* subtle separators */
-}
+/* Sticky middle Strike column (header + body) */
+.options-table thead .strike-sticky,
 .options-table tbody .strike-sticky {
   position: sticky;
-  left: calc(5 * var(--col-w));
-  z-index: 2;
+  left: calc(5 * var(--col-w)); /* after 5 call columns */
+  z-index: 6;                   /* above other cells */
+}
+
+.options-table thead .strike-sticky {
+  background: #f9fafb;
+  box-shadow: -1px 0 0 #e5e7eb, 1px 0 0 #e5e7eb;
+}
+
+.options-table tbody .strike-sticky {
   background: #fff;
   box-shadow: -1px 0 0 #f1f5f9, 1px 0 0 #f1f5f9;
 }
