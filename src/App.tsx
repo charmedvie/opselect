@@ -11,7 +11,8 @@ type OptionSide = {
   bid?: number | null;
   ask?: number | null;
   delta?: number | null;
-  iv?: number | null; // % (e.g., 24.5)
+  iv?: number | null;     // % (e.g., 24.5)
+  gamma?: number | null;  // per share, if provided by API
 };
 
 type ExpirySlice = { expiry: string; options: OptionSide[] };
@@ -24,6 +25,7 @@ type YieldRow = {
   dte: number;        // days
   delta?: number | null;
   iv?: number | null;
+  netGamma?: number | null; // per 100-share contract
   expiry: string;
   side: Side;
 };
@@ -33,6 +35,7 @@ type ViewMode = "yields" | "chain" | null;
 /* ---------- Constants ---------- */
 const DTE_BUCKETS = [7, 14, 21, 30] as const;
 const MIN_PROB_OTM = 60; // %
+const CONTRACT_MULTIPLIER = 100;
 
 /* ---------- Utils ---------- */
 const nowMs = () => Date.now();
@@ -42,15 +45,24 @@ const fmtPct = (n?: number | null) =>
   typeof n === "number" && isFinite(n) ? String(Math.round(n * 100) / 100) : "—";
 const fmtDelta = (n?: number | null) =>
   typeof n === "number" && isFinite(n) ? (Math.round(n * 100) / 100).toFixed(2) : "—";
+const fmtGamma = (n?: number | null) =>
+  typeof n === "number" && isFinite(n) ? (Math.round(n * 10000) / 10000).toFixed(4) : "—";
 const uniqKey = (r: YieldRow) => `${r.side}|${r.expiry}|${r.strike}`;
 
-/* Black–Scholes: P(OTM). Calls N(-d2); Puts N(d2). r≈0 for short-dated. */
+/* Black–Scholes components */
 function probOTM(side: Side, S: number, K: number, ivFrac: number, Tyears: number): number | null {
   if (![S, K, ivFrac, Tyears].every((v) => typeof v === "number" && v > 0)) return null;
   const sigma = ivFrac;
   const d2 = (Math.log(S / K) - 0.5 * sigma * sigma * Tyears) / (sigma * Math.sqrt(Tyears));
   const Nd2 = normCdf(d2);
   return side === "call" ? normCdf(-d2) : Nd2;
+}
+function bsGammaPerShare(S: number, K: number, ivFrac: number, Tyears: number): number | null {
+  if (![S, K, ivFrac, Tyears].every((v) => typeof v === "number" && v > 0)) return null;
+  const sigma = ivFrac;
+  const d1 = (Math.log(S / K) + 0.5 * sigma * sigma * Tyears) / (sigma * Math.sqrt(Tyears));
+  const pdf = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
+  return pdf / (S * sigma * Math.sqrt(Tyears)); // same for calls & puts
 }
 function normCdf(x: number) {
   return 0.5 * (1 + erf(x / Math.SQRT2));
@@ -168,6 +180,14 @@ export default function App() {
         const probPct = p * 100;
         if (probPct < MIN_PROB_OTM) continue;
 
+        // Net Gamma (per-contract)
+        // prefer API gamma (per share) if present; else compute BS gamma per share
+        const perShareGamma =
+          typeof o.gamma === "number" && isFinite(o.gamma)
+            ? o.gamma
+            : bsGammaPerShare(uPrice, o.strike, o.iv / 100, Tyears);
+        const netGamma = typeof perShareGamma === "number" ? perShareGamma * CONTRACT_MULTIPLIER : null;
+
         const row: YieldRow = {
           strike: o.strike,
           bid: o.bid,
@@ -176,6 +196,7 @@ export default function App() {
           dte: near.dte,
           delta: o.delta,
           iv: o.iv,
+          netGamma,
           expiry: near.ex.expiry,
           side: o.type,
         };
@@ -271,6 +292,7 @@ export default function App() {
                     <th>DTE</th>
                     <th>Bid</th>
                     <th>Delta</th>
+                    <th>Net Gamma</th>
                     <th>Yield</th>
                     <th>Prob OTM</th>
                   </tr>
@@ -283,12 +305,13 @@ export default function App() {
                         <td>{r.dte}</td>
                         <td>{fmtNum(r.bid)}</td>
                         <td>{fmtDelta(r.delta)}</td>
+                        <td>{fmtGamma(r.netGamma)}</td>
                         <td>{fmtPct(r.yieldPct)}%</td>
                         <td>{fmtPct(r.probOTM)}%</td>
                       </tr>
                     ))
                   ) : (
-                    <tr><td colSpan={6} style={{ textAlign: "center" }}>—</td></tr>
+                    <tr><td colSpan={7} style={{ textAlign: "center" }}>—</td></tr>
                   )}
                 </tbody>
               </table>
@@ -304,6 +327,7 @@ export default function App() {
                     <th>DTE</th>
                     <th>Bid</th>
                     <th>Delta</th>
+                    <th>Net Gamma</th>
                     <th>Yield</th>
                     <th>Prob OTM</th>
                   </tr>
@@ -316,12 +340,13 @@ export default function App() {
                         <td>{r.dte}</td>
                         <td>{fmtNum(r.bid)}</td>
                         <td>{fmtDelta(r.delta)}</td>
+                        <td>{fmtGamma(r.netGamma)}</td>
                         <td>{fmtPct(r.yieldPct)}%</td>
                         <td>{fmtPct(r.probOTM)}%</td>
                       </tr>
                     ))
                   ) : (
-                    <tr><td colSpan={6} style={{ textAlign: "center" }}>—</td></tr>
+                    <tr><td colSpan={7} style={{ textAlign: "center" }}>—</td></tr>
                   )}
                 </tbody>
               </table>
@@ -416,8 +441,7 @@ export default function App() {
                     <tr>
                       <td colSpan={11} style={{ textAlign: "center", padding: 24 }}>
                         No data for this expiry.
-                      </td>
-                    </tr>
+                      </td></tr>
                   )}
                 </tbody>
               </table>
