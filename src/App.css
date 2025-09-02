@@ -12,6 +12,7 @@
 @media (prefers-reduced-motion: no-preference) { a:nth-of-type(2) .logo { animation: logo-spin infinite 20s linear; } }
 .card { padding: 2em; }
 .read-the-docs { color: #888; }
+/* --- existing styles above … --- */
 
 /* ----------------------------- */
 /*   Options Chain Table Styles  */
@@ -24,13 +25,11 @@
   overflow: hidden;
 }
 
-/* SCROLL CONTAINER for sticky header+column */
 .scroll-xy {
-  max-height: 70vh;          /* gives vertical scroll inside the box */
+  max-height: 70vh;
   overflow: auto;            /* both x and y scrollbars as needed */
 }
 
-/* fixed column widths so strike can stick cleanly */
 .options-table {
   --col-w: 104px;
   border-collapse: collapse;
@@ -48,51 +47,118 @@
   white-space: nowrap;
 }
 
-/* Sticky header rows on vertical scroll (within .scroll-xy) */
 .options-table thead th {
   background: #f9fafb;
   padding: 10px 8px;
   border-bottom: 1px solid #e5e7eb;
   position: sticky;
   top: 0;
-  z-index: 5;               /* above cells and sticky strike */
+  z-index: 5;
 }
 
-/* Full-row hover highlight (override cell bg) */
 .options-table tbody tr:hover td {
   background-color: #eef2f7 !important;
   cursor: pointer;
 }
 
-/* Baby blue (more distinct) for calls */
+/* Calls: baby blue (OTM lighter) */
 .call-itm { background-color: #bae6fd; }  /* sky-200 */
 .call-otm { background-color: #e0f2fe; }  /* sky-100 */
 
-/* Pastel pink for puts */
+/* Puts: pastel pink (OTM lighter) */
 .put-itm  { background-color: #fbcfe8; }  /* pink-200 */
 .put-otm  { background-color: #fce7f3; }  /* pink-100 */
 
-/* Underlying strike marker (horizontal line) */
 .strike-underlier {
   font-weight: 700;
   border-top: 2px solid #111;
   background: #fff !important;
 }
 
-/* Sticky middle Strike column (header + body) */
 .options-table thead .strike-sticky,
 .options-table tbody .strike-sticky {
   position: sticky;
-  left: calc(5 * var(--col-w)); /* after 5 call columns */
-  z-index: 6;                   /* above other cells */
+  left: calc(5 * var(--col-w));
+  z-index: 6;
 }
-
 .options-table thead .strike-sticky {
   background: #f9fafb;
   box-shadow: -1px 0 0 #e5e7eb, 1px 0 0 #e5e7eb;
 }
-
 .options-table tbody .strike-sticky {
   background: #fff;
   box-shadow: -1px 0 0 #f1f5f9, 1px 0 0 #f1f5f9;
+}
+
+/* ----------------------------- */
+/*          Top Yields           */
+/* ----------------------------- */
+
+.header-row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.yields-panel {
+  flex: 1 1 520px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 12px;
+  text-align: left;
+  background: #fff;
+}
+
+.yields-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.yield-card {
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
+  padding: 10px;
+  background: #fafafa;
+}
+
+.yield-card h4 {
+  margin: 0 0 6px 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.yield-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.yield-table th,
+.yield-table td {
+  padding: 6px 4px;
+  border-bottom: 1px solid #f1f5f9;
+  text-align: right;
+  white-space: nowrap;
+}
+.yield-table th:first-child,
+.yield-table td:first-child {
+  text-align: left;
+}
+
+.y-badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #eef2ff;
+  border: 1px solid #e0e7ff;
+  color: #3730a3;
+}
+
+.y-meta {
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 8px;
 }
