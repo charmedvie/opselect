@@ -1,87 +1,95 @@
+/* Vite starter styles (keep yours) */
 #root {
   max-width: 1280px;
   margin: 0 auto;
   padding: 2rem;
   text-align: center;
 }
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
-}
-
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
+.logo { height: 6em; padding: 1.5em; will-change: filter; transition: filter 300ms; }
+.logo:hover { filter: drop-shadow(0 0 2em #646cffaa); }
+.logo.react:hover { filter: drop-shadow(0 0 2em #61dafbaa); }
+@keyframes logo-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
+  a:nth-of-type(2) .logo { animation: logo-spin infinite 20s linear; }
 }
-
-.card {
-  padding: 2em;
-}
-
-.read-the-docs {
-  color: #888;
-}
+.card { padding: 2em; }
+.read-the-docs { color: #888; }
 
 /* ----------------------------- */
 /*   Options Chain Table Styles  */
 /* ----------------------------- */
+
+.options-wrap {
+  margin-top: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.scroll-x {
+  overflow-x: auto;
+}
+
+/* Use fixed column widths so the middle strike column can stick cleanly */
 .options-table {
+  --col-w: 96px;                /* width per column */
   border-collapse: collapse;
-  width: 100%;
+  width: max(100%, calc(11 * var(--col-w)));
   font-size: 14px;
 }
+
 .options-table th,
 .options-table td {
+  min-width: var(--col-w);
   text-align: center;
   padding: 8px 6px;
   border-bottom: 1px solid #f1f5f9;
   white-space: nowrap;
 }
 
+/* Sticky header rows on vertical scroll */
 .options-table thead th {
   background: #f9fafb;
   padding: 10px 8px;
   border-bottom: 1px solid #e5e7eb;
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
 
-.options-table tbody tr:hover {
-  background-color: #f1f5f9;
+/* Full row hover highlight (override cell background with !important) */
+.options-table tbody tr:hover td {
+  background-color: #f1f5f9 !important;
   cursor: pointer;
 }
 
-.call-itm {
-  background-color: #cce0ff; /* darker pastel blue */
-}
-.call-otm {
-  background-color: #e6f0ff; /* lighter pastel blue */
-}
-.put-itm {
-  background-color: #ffd6eb; /* darker pastel pink */
-}
-.put-otm {
-  background-color: #ffe6f0; /* lighter pastel pink */
-}
+/* Baby blue shades for calls */
+.call-itm { background-color: #bfdbfe; }  /* darker ITM */
+.call-otm { background-color: #dbeafe; }  /* lighter OTM */
 
+/* Pastel pink for puts */
+.put-itm  { background-color: #fbcfe8; }  /* darker ITM */
+.put-otm  { background-color: #fce7f3; }  /* lighter OTM */
+
+/* Underlying strike marker (horizontal line) */
 .strike-underlier {
   font-weight: 700;
   border-top: 2px solid #111;
+  background: #fff !important;
+}
+
+/* Sticky middle Strike column (both header and body) */
+.options-table thead .strike-sticky {
+  position: sticky;
+  left: calc(5 * var(--col-w)); /* after 5 call columns */
+  z-index: 3;
+  background: #f9fafb;
+  box-shadow: -1px 0 0 #e5e7eb, 1px 0 0 #e5e7eb; /* subtle separators */
+}
+.options-table tbody .strike-sticky {
+  position: sticky;
+  left: calc(5 * var(--col-w));
+  z-index: 2;
+  background: #fff;
+  box-shadow: -1px 0 0 #f1f5f9, 1px 0 0 #f1f5f9;
 }
