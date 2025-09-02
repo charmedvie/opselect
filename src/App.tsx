@@ -17,6 +17,7 @@ type YieldRow = {
   bid: number;
   yieldPct: number;   // percent
   probOTM: number;    // percent
+  dte: number;        // integer days to expiry
   delta?: number | null;
   iv?: number | null;
   expiry: string;
@@ -38,7 +39,7 @@ export default function App() {
   const [uPrice, setUPrice] = useState<number | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
 
-  /* ---------- Derived: Top Yields (OTM only) with GLOBAL gradient ---------- */
+  /* ---------- Derived: Top Yields (OTM only), merged & sorted by yield ---------- */
   const topYields = useMemo(() => {
     if (!expiries.length || uPrice == null) return null;
 
@@ -48,17 +49,15 @@ export default function App() {
       dte: Math.max(0, Math.ceil((Date.parse(ex.expiry) - now) / (1000 * 60 * 60 * 24))),
     }));
 
-    // Build DTE buckets first
-    const buckets: Record<number, { calls: YieldRow[]; puts: YieldRow[] }> = {};
+    // collect candidates from nearest expiries to 7/14/21/30 DTE
+    const callsAll: YieldRow[] = [];
+    const putsAll: YieldRow[] = [];
 
     for (const target of DTE_BUCKETS) {
       const nearest = expWithDte
         .slice()
         .sort((a, b) => Math.abs(a.dte - target) - Math.abs(b.dte - target))[0];
       if (!nearest) continue;
-
-      const calls: YieldRow[] = [];
-      const puts: YieldRow[] = [];
 
       for (const o of nearest.ex.options) {
         if (typeof o.bid !== "number" || typeof o.strike !== "number" || o.strike <= 0) continue;
@@ -72,39 +71,40 @@ export default function App() {
         const prob = probOTM(o.type, uPrice, o.strike, o.iv / 100, T);
         if (prob == null) continue;
 
-        const y = (o.bid / o.strike) * 100; // yield in %
+        const yPct = (o.bid / o.strike) * 100;
         const row: YieldRow = {
           strike: o.strike,
           bid: o.bid,
-          yieldPct: y,
+          yieldPct: yPct,
           probOTM: prob * 100,
+          dte: nearest.dte,
           delta: o.delta,
           iv: o.iv,
           expiry: nearest.ex.expiry,
           side: o.type,
         };
-        if (o.type === "call") calls.push(row);
-        else puts.push(row);
+
+        if (o.type === "call") callsAll.push(row);
+        else putsAll.push(row);
       }
-
-      buckets[target] = {
-        calls: calls.sort((a, b) => b.yieldPct - a.yieldPct).slice(0, 5),
-        puts: puts.sort((a, b) => b.yieldPct - a.yieldPct).slice(0, 5),
-      };
     }
 
-    // GLOBAL min/max across ALL yields (all DTE + both sides)
-    const allYields: number[] = [];
-    for (const d of DTE_BUCKETS) {
-      const b = buckets[d];
-      if (!b) continue;
-      for (const r of b.calls) allYields.push(r.yieldPct);
-      for (const r of b.puts) allYields.push(r.yieldPct);
-    }
-    const gMin = allYields.length ? Math.min(...allYields) : 0;
-    const gMax = allYields.length ? Math.max(...allYields) : 1;
+    // sort descending by yield and take top 5 per side (dedupe identical strike+expiry just in case)
+    const uniqKey = (r: YieldRow) => `${r.side}-${r.expiry}-${r.strike}`;
+    const dedupe = (arr: YieldRow[]) => {
+      const seen = new Set<string>();
+      const out: YieldRow[] = [];
+      for (const r of arr) {
+        const k = uniqKey(r);
+        if (!seen.has(k)) { seen.add(k); out.push(r); }
+      }
+      return out;
+    };
 
-    return { buckets, gMin, gMax };
+    const callsTop = dedupe(callsAll).sort((a, b) => b.yieldPct - a.yieldPct).slice(0, 5);
+    const putsTop  = dedupe(putsAll ).sort((a, b) => b.yieldPct - a.yieldPct).slice(0, 5);
+
+    return { callsTop, putsTop };
   }, [expiries, uPrice]);
 
   /* ---------- Actions ---------- */
@@ -228,87 +228,73 @@ export default function App() {
       )}
       {chainErr && <p style={{ color: "crimson", marginTop: 8 }}>{chainErr}</p>}
 
-      {/* Top Yields: group by SIDE (Calls card + Puts card) */}
+      {/* Top Yields: one table per side, sorted by yield desc */}
       {topYields && uPrice != null && (
         <div className="yields-panel">
           <div className="y-meta">
-            Underlier: <strong>{uPrice}</strong> • Yield = <code>bid / strike</code> • OTM only
+            Underlier: <strong>{uPrice}</strong> • Yield = <code>bid / strike</code> • OTM only • Sorted by yield ↓
           </div>
 
           <div className="yields-grid">
-            {/* Calls card */}
+            {/* Calls table */}
             <div className="yield-card">
-              <h4><span className="y-badge">Calls (all DTE)</span></h4>
+              <h4><span className="y-badge">Calls (Top 5 overall)</span></h4>
               <table className="yield-table">
-                {DTE_BUCKETS.map((d, i) => {
-                  const b = topYields.buckets[d];
-                  if (!b) return null;
-                  return (
-                    <tbody key={`c-body-${d}`}>
-                      <tr>
-                        <th colSpan={4} style={{ textAlign: "left", paddingTop: i ? 10 : 0 }}>
-                          {d} DTE — Top Calls (OTM)
-                        </th>
+                <thead>
+                  <tr>
+                    <th>Strike</th>
+                    <th>DTE</th>
+                    <th>Bid</th>
+                    <th>Yield</th>
+                    <th>Prob OTM</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topYields.callsTop.length ? (
+                    topYields.callsTop.map((r) => (
+                      <tr key={`c-${r.expiry}-${r.strike}`}>
+                        <td style={{ textAlign: "left" }}>{r.strike}</td>
+                        <td>{r.dte}</td>
+                        <td>{fmtNum(r.bid)}</td>
+                        <td>{fmtPct(r.yieldPct)}%</td>
+                        <td>{fmtPct(r.probOTM)}%</td>
                       </tr>
-                      <tr>
-                        <th>Strike</th>
-                        <th>Bid</th>
-                        <th>Yield</th>
-                        <th>Prob OTM</th>
-                      </tr>
-                      {b.calls.length ? (
-                        b.calls.map((r) => (
-                          <tr key={`c-${d}-${r.strike}`} style={yieldShadeStyle(r.yieldPct, topYields.gMin, topYields.gMax)}>
-                            <td style={{ textAlign: "left" }}>{r.strike}</td>
-                            <td>{fmtNum(r.bid)}</td>
-                            <td>{fmtPct(r.yieldPct)}%</td>
-                            <td>{fmtPct(r.probOTM)}%</td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr><td colSpan={4} style={{ textAlign: "center" }}>—</td></tr>
-                      )}
-                    </tbody>
-                  );
-                })}
+                    ))
+                  ) : (
+                    <tr><td colSpan={5} style={{ textAlign: "center" }}>—</td></tr>
+                  )}
+                </tbody>
               </table>
             </div>
 
-            {/* Puts card */}
+            {/* Puts table */}
             <div className="yield-card">
-              <h4><span className="y-badge">Puts (all DTE)</span></h4>
+              <h4><span className="y-badge">Puts (Top 5 overall)</span></h4>
               <table className="yield-table">
-                {DTE_BUCKETS.map((d, i) => {
-                  const b = topYields.buckets[d];
-                  if (!b) return null;
-                  return (
-                    <tbody key={`p-body-${d}`}>
-                      <tr>
-                        <th colSpan={4} style={{ textAlign: "left", paddingTop: i ? 10 : 0 }}>
-                          {d} DTE — Top Puts (OTM)
-                        </th>
+                <thead>
+                  <tr>
+                    <th>Strike</th>
+                    <th>DTE</th>
+                    <th>Bid</th>
+                    <th>Yield</th>
+                    <th>Prob OTM</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topYields.putsTop.length ? (
+                    topYields.putsTop.map((r) => (
+                      <tr key={`p-${r.expiry}-${r.strike}`}>
+                        <td style={{ textAlign: "left" }}>{r.strike}</td>
+                        <td>{r.dte}</td>
+                        <td>{fmtNum(r.bid)}</td>
+                        <td>{fmtPct(r.yieldPct)}%</td>
+                        <td>{fmtPct(r.probOTM)}%</td>
                       </tr>
-                      <tr>
-                        <th>Strike</th>
-                        <th>Bid</th>
-                        <th>Yield</th>
-                        <th>Prob OTM</th>
-                      </tr>
-                      {b.puts.length ? (
-                        b.puts.map((r) => (
-                          <tr key={`p-${d}-${r.strike}`} style={yieldShadeStyle(r.yieldPct, topYields.gMin, topYields.gMax)}>
-                            <td style={{ textAlign: "left" }}>{r.strike}</td>
-                            <td>{fmtNum(r.bid)}</td>
-                            <td>{fmtPct(r.yieldPct)}%</td>
-                            <td>{fmtPct(r.probOTM)}%</td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr><td colSpan={4} style={{ textAlign: "center" }}>—</td></tr>
-                      )}
-                    </tbody>
-                  );
-                })}
+                    ))
+                  ) : (
+                    <tr><td colSpan={5} style={{ textAlign: "center" }}>—</td></tr>
+                  )}
+                </tbody>
               </table>
             </div>
           </div>
@@ -447,15 +433,6 @@ function round(n: number, dp: number) {
   return Math.round(n * p) / p;
 }
 
-/* Smooth green shading for yields: lowest = light, highest = darker (GLOBAL) */
-function yieldShadeStyle(value: number, min: number, max: number): React.CSSProperties {
-  if (!(isFinite(value) && isFinite(min) && isFinite(max)) || max <= min) return {};
-  const t = (value - min) / (max - min); // 0..1
-  // HSL green ~140deg, sat 50%, lightness 92% → 72%
-  const light = 92 - t * 20;
-  return { backgroundColor: `hsl(140 50% ${light}%)` };
-}
-
 /* ----- Black-Scholes probability of finishing OTM ----- */
 function probOTM(
   side: "call" | "put",
@@ -471,9 +448,7 @@ function probOTM(
   const Nd2 = normCdf(d2);
   return side === "call" ? normCdf(-d2) : Nd2;
 }
-function normCdf(x: number) {
-  return 0.5 * (1 + erf(x / Math.SQRT2));
-}
+function normCdf(x: number) { return 0.5 * (1 + erf(x / Math.SQRT2)); }
 function erf(x: number) {
   const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
   const sign = x < 0 ? -1 : 1;
