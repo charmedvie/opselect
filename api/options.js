@@ -1,6 +1,5 @@
 // api/options.js
 export default async function handler(req, res) {
-  // CORS headers (same as quote.js)
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -9,61 +8,74 @@ export default async function handler(req, res) {
   const symbol = String(req.query.symbol || "").trim().toUpperCase();
   if (!symbol) return res.status(400).json({ error: "Missing symbol" });
 
-  const apiKey = "jRU3AOMqa5zoUiXUKIw_2JkLVCIZ9ST9"; // Polygon key
-  const url = `https://api.polygon.io/v3/snapshot/options/${encodeURIComponent(
-    symbol
-  )}?apiKey=${apiKey}`;
+  const token = process.env.FINNHUB_KEY || ""; // put your key in Vercel envs
+  if (!token) return res.status(500).json({ error: "Missing FINNHUB_KEY" });
+
+  const url = `https://finnhub.io/api/v1/stock/option-chain?symbol=${encodeURIComponent(symbol)}&token=${token}`;
 
   try {
-    const r = await fetch(url);
+    const r = await fetch(url, { headers: { Accept: "application/json" } });
     const text = await r.text();
-    if (!r.ok) return res.status(r.status).send(text.slice(0, 500));
+    if (!r.ok) return res.status(r.status).send(text.slice(0, 1000));
 
     const j = JSON.parse(text);
+    // Expected shape (matches your sample):
+    // { code, exchange, lastTradeDate, lastTradePrice, data: [ { expirationDate, options: { CALL:[], PUT:[] } } ] }
 
-    if (!j || !Array.isArray(j.results)) {
+    if (!j?.data || !Array.isArray(j.data) || j.data.length === 0) {
+      // Rate-limit / entitlement messages often show as {error}, {note}, etc.
       return res.status(502).json({ error: j?.error || "No options data" });
     }
 
-    const uPrice = j.underlying_asset?.price ?? null;
-    const byExpiry = new Map();
+    const underlier = num(j.lastTradePrice);
 
-    for (const opt of j.results) {
-      const exp = opt.details.expiration_date;
-      if (!byExpiry.has(exp)) byExpiry.set(exp, []);
-      byExpiry.get(exp).push({
-        strike: opt.details.strike_price,
-        type: opt.details.contract_type.toLowerCase(), // "call" | "put"
-        last: num(opt.last_quote?.p),
-        bid: num(opt.last_quote?.b),
-        ask: num(opt.last_quote?.a),
-        delta: num(opt.greeks?.delta),
-        iv: num(opt.greeks?.iv ? opt.greeks.iv * 100 : null), // percent
-      });
-    }
+    // Map expiries to our frontend format
+    const expiries = j.data.map((slice) => {
+      const exp = slice.expirationDate; // ISO-like "YYYY-MM-DD"
+      const calls = Array.isArray(slice?.options?.CALL) ? slice.options.CALL : [];
+      const puts  = Array.isArray(slice?.options?.PUT)  ? slice.options.PUT  : [];
 
-    // Convert map to array, trim ~50 strikes per expiry
-    const expiries = [];
-    for (const [exp, arr] of byExpiry.entries()) {
-      const strikes = [...new Set(arr.map((o) => o.strike))].sort((a, b) => a - b);
-      const center =
-        typeof uPrice === "number"
-          ? uPrice
-          : strikes[Math.floor(strikes.length / 2)] ?? 0;
-      const sortedByDist = [...strikes].sort(
-        (a, b) => Math.abs(a - center) - Math.abs(b - center)
-      );
+      const mapped = [];
+      for (const c of calls) {
+        mapped.push({
+          strike: num(c.strike),
+          type: "call",
+          last: num(c.lastPrice),
+          bid: num(c.bid),
+          ask: num(c.ask),
+          delta: num(c.delta),
+          iv: normIv(c.impliedVolatility), // show as %
+        });
+      }
+      for (const p of puts) {
+        mapped.push({
+          strike: num(p.strike),
+          type: "put",
+          last: num(p.lastPrice),
+          bid: num(p.bid),
+          ask: num(p.ask),
+          delta: num(p.delta),
+          iv: normIv(p.impliedVolatility),
+        });
+      }
+
+      // Keep ~50 strikes centred near underlying (fallback to median)
+      const strikes = [...new Set(mapped.map((o) => o.strike))].sort((a, b) => a - b);
+      const center = typeof underlier === "number" ? underlier : (strikes[Math.floor(strikes.length / 2)] ?? 0);
+      const sortedByDist = [...strikes].sort((a, b) => Math.abs(a - center) - Math.abs(b - center));
       const keep = new Set(sortedByDist.slice(0, 50));
-      expiries.push({
-        expiry: exp,
-        options: arr.filter((o) => keep.has(o.strike)),
-      });
-    }
+      const filtered = mapped.filter((o) => keep.has(o.strike));
+
+      return { expiry: exp, options: filtered };
+    });
+
+    // Sort expiries ascending
+    expiries.sort((a, b) => String(a.expiry).localeCompare(String(b.expiry)));
 
     res.setHeader("Cache-Control", "s-maxage=15, stale-while-revalidate=60");
     return res.status(200).json({
       symbol,
-      underlierPrice: uPrice,
+      underlierPrice: underlier,
       expiries,
     });
   } catch (e) {
@@ -75,4 +87,15 @@ export default async function handler(req, res) {
 function num(n) {
   const x = Number(n);
   return Number.isFinite(x) ? x : null;
+}
+// Provider sometimes returns IV as percent (e.g., 357.34) or fraction (e.g., 0.3573).
+function normIv(iv) {
+  if (!Number.isFinite(Number(iv))) return null;
+  const v = Number(iv);
+  // Heuristic: treat <= 3 as fraction, else already percent.
+  return v <= 3 ? round(v * 100, 2) : round(v, 2);
+}
+function round(n, dp = 2) {
+  const p = 10 ** dp;
+  return Math.round(n * p) / p;
 }
