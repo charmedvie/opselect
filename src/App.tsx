@@ -1,26 +1,16 @@
 import { useMemo, useState } from "react";
+import "./App.css";
 
-/* ---------- Types returned by /api/options ---------- */
 type OptionSide = {
   strike: number;
   type: "call" | "put";
   last?: number | null;
   bid?: number | null;
   ask?: number | null;
-  delta?: number | null; // e.g., 0.42 or -0.58
-  iv?: number | null;    // e.g., 24.3 for 24.3%
+  delta?: number | null;
+  iv?: number | null;
 };
-
-type ExpirySlice = {
-  expiry: string;        // ISO or YYYY-MM-DD
-  options: OptionSide[]; // mixed calls & puts
-};
-
-interface OptionsChainResponse {
-  symbol: string;
-  underlierPrice?: number;
-  expiries: ExpirySlice[];
-}
+type ExpirySlice = { expiry: string; options: OptionSide[] };
 
 export default function App() {
   const [symbol, setSymbol] = useState("");
@@ -29,7 +19,6 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  // Options chain state
   const [chainLoading, setChainLoading] = useState(false);
   const [chainErr, setChainErr] = useState("");
   const [expiries, setExpiries] = useState<ExpirySlice[]>([]);
@@ -76,50 +65,15 @@ export default function App() {
     }
 
     try {
-      const url = `/api/options?symbol=${encodeURIComponent(
-        s
-      )}&allExpiries=1&limit=50`;
-
+      const url = `/api/options?symbol=${encodeURIComponent(s)}`;
       const res = await fetch(url);
       const text = await res.text();
       if (!res.ok) throw new Error(text);
+      const json = JSON.parse(text);
 
-      const json = JSON.parse(text) as OptionsChainResponse;
       if (!json?.expiries?.length) throw new Error("No options data found.");
-
       setUPrice(typeof json.underlierPrice === "number" ? json.underlierPrice : null);
-
-      // Normalize + center to ~50 strikes for each expiry
-      const normalized: ExpirySlice[] = json.expiries.map((slice: ExpirySlice) => {
-        const calls: OptionSide[] = slice.options.filter((o: OptionSide) => o.type === "call");
-        const puts: OptionSide[] = slice.options.filter((o: OptionSide) => o.type === "put");
-
-        const strikesSet = new Set<number>([
-          ...calls.map((c: OptionSide) => c.strike),
-          ...puts.map((p: OptionSide) => p.strike),
-        ]);
-        const strikes = Array.from(strikesSet).sort((a, b) => a - b);
-
-        const center =
-          typeof json.underlierPrice === "number"
-            ? json.underlierPrice
-            : strikes[Math.floor(strikes.length / 2)] ?? 0;
-
-        const strikesByDistance = [...strikes].sort(
-          (a, b) => Math.abs(a - center) - Math.abs(b - center)
-        );
-        const target = new Set<number>(strikesByDistance.slice(0, 50).sort((a, b) => a - b));
-
-        const filteredCalls = calls.filter((c: OptionSide) => target.has(c.strike));
-        const filteredPuts = puts.filter((p: OptionSide) => target.has(p.strike));
-
-        return {
-          expiry: slice.expiry,
-          options: [...filteredCalls, ...filteredPuts],
-        };
-      });
-
-      setExpiries(normalized);
+      setExpiries(json.expiries);
     } catch (e: any) {
       setChainErr(e?.message || "Options fetch failed");
     } finally {
@@ -129,7 +83,6 @@ export default function App() {
 
   const activeExpiry: ExpirySlice | undefined = expiries[activeIdx];
 
-  // Build table rows: one row per strike, calls | strike | puts
   const rows = useMemo(() => {
     if (!activeExpiry) return [] as {
       strike: number;
@@ -163,7 +116,6 @@ export default function App() {
     <div style={{ padding: 24, fontFamily: "system-ui, sans-serif", maxWidth: 1100, margin: "0 auto" }}>
       <h1>Stock Price Lookup</h1>
 
-      {/* Symbol + actions */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <input
           value={symbol}
@@ -180,7 +132,6 @@ export default function App() {
         </button>
       </div>
 
-      {/* Price output */}
       {err && <p style={{ color: "crimson", marginTop: 8 }}>{err}</p>}
       {price !== null && !err && (
         <p style={{ marginTop: 12 }}>
@@ -188,11 +139,8 @@ export default function App() {
           {price}
         </p>
       )}
-
-      {/* Chain Errors */}
       {chainErr && <p style={{ color: "crimson", marginTop: 12 }}>{chainErr}</p>}
 
-      {/* Expiry Tabs */}
       {expiries.length > 0 && (
         <div style={{ marginTop: 16 }}>
           <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8 }}>
@@ -216,60 +164,72 @@ export default function App() {
             ))}
           </div>
 
-          {/* Underlier ref */}
           {uPrice !== null && (
             <div style={{ marginTop: 8, opacity: 0.7 }}>
               Underlier: <strong>{uPrice}</strong>
             </div>
           )}
 
-          {/* Chain Table */}
           <div style={{ marginTop: 12, border: "1px solid #e5e7eb", borderRadius: 10, overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
-              <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
-                <thead style={{ background: "#f9fafb" }}>
+              <table className="options-table">
+                <thead>
                   <tr>
-                    <th colSpan={5} style={thStyle}>Calls</th>
-                    <th style={thStyle}>Strike</th>
-                    <th colSpan={5} style={thStyle}>Puts</th>
+                    <th colSpan={5}>Calls</th>
+                    <th>Strike</th>
+                    <th colSpan={5}>Puts</th>
                   </tr>
                   <tr>
-                    <th style={thStyle}>Last</th>
-                    <th style={thStyle}>Bid</th>
-                    <th style={thStyle}>Ask</th>
-                    <th style={thStyle}>Delta</th>
-                    <th style={thStyle}>IV %</th>
-                    <th style={thStyle}>-</th>
-                    <th style={thStyle}>IV %</th>
-                    <th style={thStyle}>Delta</th>
-                    <th style={thStyle}>Ask</th>
-                    <th style={thStyle}>Bid</th>
-                    <th style={thStyle}>Last</th>
+                    <th>Last</th>
+                    <th>Bid</th>
+                    <th>Ask</th>
+                    <th>Delta</th>
+                    <th>IV %</th>
+                    <th>-</th>
+                    <th>IV %</th>
+                    <th>Delta</th>
+                    <th>Ask</th>
+                    <th>Bid</th>
+                    <th>Last</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r: { strike: number; call: OptionSide | null; put: OptionSide | null }) => {
-                    const c = r.call;
-                    const p = r.put;
+                  {rows.map((r) => {
+                    const c = r.call, p = r.put;
+                    const isAt = uPrice !== null && r.strike === Math.round(uPrice);
+
+                    const callClass =
+                      c && uPrice !== null
+                        ? r.strike < uPrice
+                          ? "call-itm"
+                          : "call-otm"
+                        : "";
+                    const putClass =
+                      p && uPrice !== null
+                        ? r.strike > uPrice
+                          ? "put-itm"
+                          : "put-otm"
+                        : "";
+
                     return (
                       <tr key={r.strike}>
-                        <td style={tdStyle}>{fmtNum(c?.last)}</td>
-                        <td style={tdStyle}>{fmtNum(c?.bid)}</td>
-                        <td style={tdStyle}>{fmtNum(c?.ask)}</td>
-                        <td style={tdStyle}>{fmtDelta(c?.delta)}</td>
-                        <td style={tdStyle}>{fmtPct(c?.iv)}</td>
-                        <td style={{ ...tdStyle, fontWeight: 700 }}>{r.strike}</td>
-                        <td style={tdStyle}>{fmtPct(p?.iv)}</td>
-                        <td style={tdStyle}>{fmtDelta(p?.delta)}</td>
-                        <td style={tdStyle}>{fmtNum(p?.ask)}</td>
-                        <td style={tdStyle}>{fmtNum(p?.bid)}</td>
-                        <td style={tdStyle}>{fmtNum(p?.last)}</td>
+                        <td className={callClass}>{fmtNum(c?.last)}</td>
+                        <td className={callClass}>{fmtNum(c?.bid)}</td>
+                        <td className={callClass}>{fmtNum(c?.ask)}</td>
+                        <td className={callClass}>{fmtDelta(c?.delta)}</td>
+                        <td className={callClass}>{fmtPct(c?.iv)}</td>
+                        <td className={isAt ? "strike-underlier" : ""}>{r.strike}</td>
+                        <td className={putClass}>{fmtPct(p?.iv)}</td>
+                        <td className={putClass}>{fmtDelta(p?.delta)}</td>
+                        <td className={putClass}>{fmtNum(p?.ask)}</td>
+                        <td className={putClass}>{fmtNum(p?.bid)}</td>
+                        <td className={putClass}>{fmtNum(p?.last)}</td>
                       </tr>
                     );
                   })}
                   {rows.length === 0 && (
                     <tr>
-                      <td colSpan={11} style={{ ...tdStyle, textAlign: "center", padding: 24 }}>
+                      <td colSpan={11} style={{ textAlign: "center", padding: 24 }}>
                         No data for this expiry.
                       </td>
                     </tr>
@@ -278,17 +238,13 @@ export default function App() {
               </table>
             </div>
           </div>
-
-          <div style={{ marginTop: 8, opacity: 0.6, fontSize: 12 }}>
-            Showing up to 50 strikes centred near the underlier for each expiry.
-          </div>
         </div>
       )}
     </div>
   );
 }
 
-/* ---------- Helpers / formatting ---------- */
+/* ---------- Helpers ---------- */
 function formatExpiry(s: string) {
   const t = Date.parse(s);
   if (!Number.isNaN(t)) {
@@ -314,17 +270,3 @@ function round(n: number, dp: number) {
   const p = 10 ** dp;
   return Math.round(n * p) / p;
 }
-
-/* ---------- Table cell styles ---------- */
-const thStyle: React.CSSProperties = {
-  textAlign: "center",
-  padding: "10px 8px",
-  borderBottom: "1px solid #e5e7eb",
-  whiteSpace: "nowrap",
-};
-const tdStyle: React.CSSProperties = {
-  textAlign: "center",
-  padding: "8px 6px",
-  borderBottom: "1px solid #f1f5f9",
-  whiteSpace: "nowrap",
-};
