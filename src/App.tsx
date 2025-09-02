@@ -25,6 +25,7 @@ type YieldRow = {
 };
 
 const DTE_BUCKETS = [7, 14, 21, 30] as const;
+type ViewMode = "yields" | "chain" | null;
 
 export default function App() {
   const [symbol, setSymbol] = useState("");
@@ -37,6 +38,9 @@ export default function App() {
   const [expiries, setExpiries] = useState<ExpirySlice[]>([]);
   const [uPrice, setUPrice] = useState<number | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
+
+  // NEW: which section to show
+  const [view, setView] = useState<ViewMode>(null);
 
   /* ---------- Derived: Top Yields (OTM only), merged & sorted by yield ---------- */
   const topYields = useMemo(() => {
@@ -138,8 +142,7 @@ export default function App() {
     setExpiries(json.expiries);
   };
 
-  // Check Yields: refresh quote then refresh options (yields use options)
-  const onCheckYields = async () => {
+  const runFlow = async (targetView: ViewMode) => {
     const s = symbol.trim().toUpperCase();
     setSymbol(s);
     if (!s) return setErr("Enter a ticker first.");
@@ -148,6 +151,7 @@ export default function App() {
     try {
       await updateQuote(s);
       await fetchOptions(s);
+      setView(targetView);
     } catch (e: any) {
       setChainErr(e?.message || "Options fetch failed");
     } finally {
@@ -155,22 +159,11 @@ export default function App() {
     }
   };
 
-  // Options Chain button: refresh quote then options, same as above (but keeps table active)
-  const onOptionsChain = async () => {
-    const s = symbol.trim().toUpperCase();
-    setSymbol(s);
-    if (!s) return setErr("Enter a ticker first.");
-    setChainLoading(true);
-    setChainErr("");
-    try {
-      await updateQuote(s);
-      await fetchOptions(s);
-    } catch (e: any) {
-      setChainErr(e?.message || "Options fetch failed");
-    } finally {
-      setChainLoading(false);
-    }
-  };
+  // Check Yields: Enter key or button
+  const onCheckYields = async () => runFlow("yields");
+
+  // Options Chain button
+  const onOptionsChain = async () => runFlow("chain");
 
   /* ---------- Chain rows for table ---------- */
   const activeExpiry: ExpirySlice | undefined = expiries[activeIdx];
@@ -209,7 +202,7 @@ export default function App() {
     <div style={{ padding: 24, fontFamily: "system-ui, sans-serif", maxWidth: 1200, margin: "0 auto" }}>
       <h1>Stock Price Lookup</h1>
 
-      {/* Controls (full width) */}
+      {/* Controls */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <input
           value={symbol}
@@ -219,14 +212,14 @@ export default function App() {
           style={{ textTransform: "uppercase", padding: 8, minWidth: 220 }}
         />
         <button onClick={onCheckYields} disabled={chainLoading || !symbol.trim()}>
-          {chainLoading ? "Loading…" : "Check Yields"}
+          {chainLoading && view === "yields" ? "Loading…" : "Check Yields"}
         </button>
         <button onClick={onOptionsChain} disabled={chainLoading || !symbol.trim()}>
-          {chainLoading ? "Loading…" : "Options Chain"}
+          {chainLoading && view === "chain" ? "Loading…" : "Options Chain"}
         </button>
       </div>
 
-      {/* Price + chain errors */}
+      {/* Price + errors */}
       {err && <p style={{ color: "crimson", marginTop: 8 }}>{err}</p>}
       {price !== null && !err && (
         <p style={{ marginTop: 8 }}>
@@ -236,8 +229,10 @@ export default function App() {
       )}
       {chainErr && <p style={{ color: "crimson", marginTop: 8 }}>{chainErr}</p>}
 
-      {/* Top Yields: one table per side, sorted by yield desc, ProbOTM >= 60% */}
-      {topYields && uPrice != null && (
+      {/* ------- SHOW ONLY ONE SECTION AT A TIME ------- */}
+
+      {/* Yields ONLY */}
+      {view === "yields" && topYields && uPrice != null && (
         <div className="yields-panel">
           <div className="y-meta">
             Underlier: <strong>{uPrice}</strong> • Yield = <code>bid / strike</code> • OTM only • Prob OTM ≥ 60% • Top 10
@@ -313,8 +308,8 @@ export default function App() {
         </div>
       )}
 
-      {/* Options chain below yields */}
-      {expiries.length > 0 && (
+      {/* Chain ONLY */}
+      {view === "chain" && expiries.length > 0 && (
         <div style={{ marginTop: 16 }}>
           {/* Tabs */}
           <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8 }}>
