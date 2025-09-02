@@ -175,9 +175,9 @@ export default function App() {
             </div>
           )}
 
-          {/* Table */}
+          {/* Table inside scroll container so sticky works */}
           <div className="options-wrap">
-            <div className="scroll-x">
+            <div className="scroll-xy">
               <table className="options-table">
                 <thead>
                   <tr>
@@ -192,7 +192,7 @@ export default function App() {
                     <th>Ask</th>
                     <th>Bid</th>
                     <th>Last</th>
-                    {/* Strike header cell sticks horizontally too */}
+                    {/* Strike header sticks horizontally too */}
                     <th className="strike-sticky">-</th>
                     {/* Puts: Last, Bid, Ask, Delta, IV */}
                     <th>Last</th>
