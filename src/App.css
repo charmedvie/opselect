@@ -12,7 +12,6 @@
 @media (prefers-reduced-motion: no-preference) { a:nth-of-type(2) .logo { animation: logo-spin infinite 20s linear; } }
 .card { padding: 2em; }
 .read-the-docs { color: #888; }
-/* --- existing styles above … --- */
 
 /* ----------------------------- */
 /*   Options Chain Table Styles  */
@@ -25,11 +24,13 @@
   overflow: hidden;
 }
 
+/* scroll container so header/strike can stick */
 .scroll-xy {
   max-height: 70vh;
   overflow: auto;            /* both x and y scrollbars as needed */
 }
 
+/* fixed column widths so strike can stick cleanly */
 .options-table {
   --col-w: 104px;
   border-collapse: collapse;
@@ -47,6 +48,7 @@
   white-space: nowrap;
 }
 
+/* Sticky header rows on vertical scroll (within .scroll-xy) */
 .options-table thead th {
   background: #f9fafb;
   padding: 10px 8px;
@@ -56,6 +58,7 @@
   z-index: 5;
 }
 
+/* Full-row hover highlight (override cell bg) */
 .options-table tbody tr:hover td {
   background-color: #eef2f7 !important;
   cursor: pointer;
@@ -75,10 +78,11 @@
   background: #fff !important;
 }
 
+/* Sticky middle Strike column (header + body) */
 .options-table thead .strike-sticky,
 .options-table tbody .strike-sticky {
   position: sticky;
-  left: calc(5 * var(--col-w));
+  left: calc(5 * var(--col-w)); /* after 5 call columns */
   z-index: 6;
 }
 .options-table thead .strike-sticky {
@@ -94,15 +98,8 @@
 /*          Top Yields           */
 /* ----------------------------- */
 
-.header-row {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  flex-wrap: wrap;
-}
-
 .yields-panel {
-  flex: 1 1 520px;
+  margin-top: 16px;
   border: 1px solid #e5e7eb;
   border-radius: 12px;
   padding: 12px;
