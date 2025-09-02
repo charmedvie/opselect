@@ -30,7 +30,6 @@ export default function App() {
   const [symbol, setSymbol] = useState("");
   const [price, setPrice] = useState<number | null>(null);
   const [currency, setCurrency] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
   const [chainLoading, setChainLoading] = useState(false);
@@ -49,7 +48,6 @@ export default function App() {
       dte: Math.max(0, Math.ceil((Date.parse(ex.expiry) - now) / (1000 * 60 * 60 * 24))),
     }));
 
-    // collect candidates from nearest expiries to 7/14/21/30 DTE
     const callsAll: YieldRow[] = [];
     const putsAll: YieldRow[] = [];
 
@@ -71,12 +69,16 @@ export default function App() {
         const prob = probOTM(o.type, uPrice, o.strike, o.iv / 100, T);
         if (prob == null) continue;
 
+        // Keep only >= 60% OTM probability
+        const probPct = prob * 100;
+        if (probPct < 60) continue;
+
         const yPct = (o.bid / o.strike) * 100;
         const row: YieldRow = {
           strike: o.strike,
           bid: o.bid,
           yieldPct: yPct,
-          probOTM: prob * 100,
+          probOTM: probPct,
           dte: nearest.dte,
           delta: o.delta,
           iv: o.iv,
@@ -89,7 +91,7 @@ export default function App() {
       }
     }
 
-    // sort descending by yield and take top 5 per side (dedupe identical strike+expiry just in case)
+    // sort by yield desc, dedupe, top 10 per side
     const uniqKey = (r: YieldRow) => `${r.side}-${r.expiry}-${r.strike}`;
     const dedupe = (arr: YieldRow[]) => {
       const seen = new Set<string>();
@@ -101,23 +103,16 @@ export default function App() {
       return out;
     };
 
-    const callsTop = dedupe(callsAll).sort((a, b) => b.yieldPct - a.yieldPct).slice(0, 5);
-    const putsTop  = dedupe(putsAll ).sort((a, b) => b.yieldPct - a.yieldPct).slice(0, 5);
+    const callsTop = dedupe(callsAll).sort((a, b) => b.yieldPct - a.yieldPct).slice(0, 10);
+    const putsTop  = dedupe(putsAll ).sort((a, b) => b.yieldPct - a.yieldPct).slice(0, 10);
 
     return { callsTop, putsTop };
   }, [expiries, uPrice]);
 
   /* ---------- Actions ---------- */
-  const fetchPrice = async () => {
-    setErr("");
-    setPrice(null);
-    setCurrency(null);
-    const s = symbol.trim().toUpperCase();
-    setSymbol(s);
-    if (!s) return;
-
+  const updateQuote = async (s: string) => {
     try {
-      setLoading(true);
+      setErr("");
       const res = await fetch(`/api/quote?symbol=${encodeURIComponent(s)}`);
       const text = await res.text();
       if (!res.ok) throw new Error(text);
@@ -126,37 +121,50 @@ export default function App() {
       setPrice(json.price);
       setCurrency(json.currency ?? null);
     } catch (e: any) {
-      setErr(e?.message || "Fetch failed");
-    } finally {
-      setLoading(false);
+      setErr(e?.message || "Quote fetch failed");
+      setPrice(null);
+      setCurrency(null);
     }
   };
 
-  const fetchOptionsChain = async () => {
-    setChainErr("");
-    setChainLoading(true);
-    setExpiries([]);
-    setActiveIdx(0);
-    setUPrice(null);
+  const fetchOptions = async (s: string) => {
+    const url = `/api/options?symbol=${encodeURIComponent(s)}`;
+    const res = await fetch(url);
+    const text = await res.text();
+    if (!res.ok) throw new Error(text);
+    const json = JSON.parse(text);
+    if (!json?.expiries?.length) throw new Error("No options data found.");
+    setUPrice(typeof json.underlierPrice === "number" ? json.underlierPrice : null);
+    setExpiries(json.expiries);
+  };
 
+  // Check Yields: refresh quote then refresh options (yields use options)
+  const onCheckYields = async () => {
     const s = symbol.trim().toUpperCase();
     setSymbol(s);
-    if (!s) {
-      setChainLoading(false);
-      setChainErr("Enter a ticker first.");
-      return;
-    }
-
+    if (!s) return setErr("Enter a ticker first.");
+    setChainLoading(true);
+    setChainErr("");
     try {
-      const url = `/api/options?symbol=${encodeURIComponent(s)}`;
-      const res = await fetch(url);
-      const text = await res.text();
-      if (!res.ok) throw new Error(text);
-      const json = JSON.parse(text);
+      await updateQuote(s);
+      await fetchOptions(s);
+    } catch (e: any) {
+      setChainErr(e?.message || "Options fetch failed");
+    } finally {
+      setChainLoading(false);
+    }
+  };
 
-      if (!json?.expiries?.length) throw new Error("No options data found.");
-      setUPrice(typeof json.underlierPrice === "number" ? json.underlierPrice : null);
-      setExpiries(json.expiries);
+  // Options Chain button: refresh quote then options, same as above (but keeps table active)
+  const onOptionsChain = async () => {
+    const s = symbol.trim().toUpperCase();
+    setSymbol(s);
+    if (!s) return setErr("Enter a ticker first.");
+    setChainLoading(true);
+    setChainErr("");
+    try {
+      await updateQuote(s);
+      await fetchOptions(s);
     } catch (e: any) {
       setChainErr(e?.message || "Options fetch failed");
     } finally {
@@ -206,15 +214,15 @@ export default function App() {
         <input
           value={symbol}
           onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-          onKeyDown={(e) => e.key === "Enter" && fetchPrice()}
+          onKeyDown={(e) => e.key === "Enter" && onCheckYields()}
           placeholder="Enter ticker (e.g., AAPL)"
           style={{ textTransform: "uppercase", padding: 8, minWidth: 220 }}
         />
-        <button onClick={fetchPrice} disabled={loading || !symbol.trim()}>
-          {loading ? "Loading…" : "Get Price"}
+        <button onClick={onCheckYields} disabled={chainLoading || !symbol.trim()}>
+          {chainLoading ? "Loading…" : "Check Yields"}
         </button>
-        <button onClick={fetchOptionsChain} disabled={chainLoading || !symbol.trim()}>
-          {chainLoading ? "Loading chain…" : "Get Options Chain"}
+        <button onClick={onOptionsChain} disabled={chainLoading || !symbol.trim()}>
+          {chainLoading ? "Loading…" : "Options Chain"}
         </button>
       </div>
 
@@ -228,23 +236,24 @@ export default function App() {
       )}
       {chainErr && <p style={{ color: "crimson", marginTop: 8 }}>{chainErr}</p>}
 
-      {/* Top Yields: one table per side, sorted by yield desc */}
+      {/* Top Yields: one table per side, sorted by yield desc, ProbOTM >= 60% */}
       {topYields && uPrice != null && (
         <div className="yields-panel">
           <div className="y-meta">
-            Underlier: <strong>{uPrice}</strong> • Yield = <code>bid / strike</code> • OTM only • Sorted by yield ↓
+            Underlier: <strong>{uPrice}</strong> • Yield = <code>bid / strike</code> • OTM only • Prob OTM ≥ 60% • Top 10
           </div>
 
           <div className="yields-grid">
             {/* Calls table */}
             <div className="yield-card">
-              <h4><span className="y-badge">Calls (Top 5 overall)</span></h4>
+              <h4><span className="y-badge">Calls (Top 10)</span></h4>
               <table className="yield-table">
                 <thead>
                   <tr>
                     <th>Strike</th>
                     <th>DTE</th>
                     <th>Bid</th>
+                    <th>Delta</th>
                     <th>Yield</th>
                     <th>Prob OTM</th>
                   </tr>
@@ -256,12 +265,13 @@ export default function App() {
                         <td style={{ textAlign: "left" }}>{r.strike}</td>
                         <td>{r.dte}</td>
                         <td>{fmtNum(r.bid)}</td>
+                        <td>{fmtDelta(r.delta)}</td>
                         <td>{fmtPct(r.yieldPct)}%</td>
                         <td>{fmtPct(r.probOTM)}%</td>
                       </tr>
                     ))
                   ) : (
-                    <tr><td colSpan={5} style={{ textAlign: "center" }}>—</td></tr>
+                    <tr><td colSpan={6} style={{ textAlign: "center" }}>—</td></tr>
                   )}
                 </tbody>
               </table>
@@ -269,13 +279,14 @@ export default function App() {
 
             {/* Puts table */}
             <div className="yield-card">
-              <h4><span className="y-badge">Puts (Top 5 overall)</span></h4>
+              <h4><span className="y-badge">Puts (Top 10)</span></h4>
               <table className="yield-table">
                 <thead>
                   <tr>
                     <th>Strike</th>
                     <th>DTE</th>
                     <th>Bid</th>
+                    <th>Delta</th>
                     <th>Yield</th>
                     <th>Prob OTM</th>
                   </tr>
@@ -287,12 +298,13 @@ export default function App() {
                         <td style={{ textAlign: "left" }}>{r.strike}</td>
                         <td>{r.dte}</td>
                         <td>{fmtNum(r.bid)}</td>
+                        <td>{fmtDelta(r.delta)}</td>
                         <td>{fmtPct(r.yieldPct)}%</td>
                         <td>{fmtPct(r.probOTM)}%</td>
                       </tr>
                     ))
                   ) : (
-                    <tr><td colSpan={5} style={{ textAlign: "center" }}>—</td></tr>
+                    <tr><td colSpan={6} style={{ textAlign: "center" }}>—</td></tr>
                   )}
                 </tbody>
               </table>
