@@ -56,8 +56,6 @@ const fmtDelta = (n?: number | null) =>
   typeof n === "number" && isFinite(n) ? (Math.round(n * 100) / 100).toFixed(2) : "—";
 const fmt0 = (n?: number | null) =>
   typeof n === "number" && isFinite(n) ? String(Math.round(n)) : "—";
-const fmtGamma2 = (n?: number | null) =>
-  typeof n === "number" && isFinite(n) ? n.toFixed(2) : "—";
 const uniqKey = (r: YieldRow) => `${r.side}|${r.expiry}|${r.strike}`;
 
 /* ---- Gradient helpers for "Vs goal (bps)" ---- */
@@ -702,12 +700,12 @@ export default function App() {
             ))}
           </div>
 
-          {/* Data timestamp for chain too (to match yields) */}
+          {/* Data timestamp for chain too */}
           <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
             Data timestamp: <strong>{dataTimestamp ?? new Date().toLocaleString()}</strong>
           </div>
 
-          {/* Underlier badge (kept subtle) */}
+          {/* Underlier badge */}
           {uPrice !== null && (
             <div style={{ marginTop: 2, marginBottom: 8, display: "inline-block",
               padding: "4px 8px", borderRadius: 8, background: "#f8fafc", border: "1px solid #e2e8f0" }}>
