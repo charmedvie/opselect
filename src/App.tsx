@@ -1,455 +1,464 @@
-// App.tsx — hardened: forward-d2 OTM + IV interpolation + Yield Goal columns
-import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import "./App.css";
 
-// ----------------------------- Types -----------------------------
-type OptionType = "call" | "put";
+/* ---------- Types ---------- */
+type Side = "call" | "put";
 
-type Quote = {
-  symbol: string;
-  price: number;
-  dividendYield?: number; // decimal, e.g., 0.012 for 1.2%
+type OptionSide = {
+  strike: number;
+  type: Side;
+  last?: number | null;
+  bid?: number | null;
+  ask?: number | null;
+  delta?: number | null;
+  iv?: number | null;     // % (e.g., 24.5)
+  gamma?: number | null;  // per share, if provided by API
 };
 
-type ChainLeg = {
-  type?: OptionType;
-  strike?: number;
-  expiry?: string; // ISO date preferred
-  last?: number;  // premium; fallback to mid if needed
-  bid?: number;
-  ask?: number;
-  iv?: number;    // decimal per strike if available
-  delta?: number; // optional if your API gives it
-  gamma?: number; // optional if your API gives it
-  openInterest?: number;
+type ExpirySlice = { expiry: string; options: OptionSide[] };
+
+type YieldRow = {
+  strike: number;
+  bid: number;
+  yieldPct: number;   // %
+  probOTM: number;    // %
+  dte: number;        // days
+  delta?: number | null;
+  iv?: number | null;
+  netGamma?: number | null; // per 100-share contract
+  expiry: string;
+  side: Side;
 };
 
-type OptionsChain = ChainLeg[];
+type ViewMode = "yields" | "chain" | null;
 
-// ----------------------------- Config -----------------------------
-const DEFAULT_RISK_FREE = 0.04; // simple proxy if you don't have a term-structure
+/* ---------- Constants ---------- */
+const DTE_BUCKETS = [7, 14, 21, 30] as const;
+const MIN_PROB_OTM = 60; // %
+const CONTRACT_MULTIPLIER = 100;
 
-// Replace these with your real data layer:
-async function fetchQuote(symbol: string): Promise<Quote> {
-  const res = await fetch(`/api/quote?symbol=${encodeURIComponent(symbol)}`);
-  if (!res.ok) throw new Error("Failed to fetch quote");
-  return res.json();
+/* ---------- Utils ---------- */
+const nowMs = () => Date.now();
+const daysBetween = (a: number, b: number) => Math.max(0, Math.ceil((b - a) / 86400000));
+const fmtNum = (n?: number | null) => (typeof n === "number" && isFinite(n) ? String(n) : "—");
+const fmtPct = (n?: number | null) =>
+  typeof n === "number" && isFinite(n) ? String(Math.round(n * 100) / 100) : "—";
+const fmtDelta = (n?: number | null) =>
+  typeof n === "number" && isFinite(n) ? (Math.round(n * 100) / 100).toFixed(2) : "—";
+const fmtGamma = (n?: number | null) =>
+  typeof n === "number" && isFinite(n) ? (Math.round(n * 10000) / 10000).toFixed(4) : "—";
+const uniqKey = (r: YieldRow) => `${r.side}|${r.expiry}|${r.strike}`;
+
+/* Black–Scholes components */
+function probOTM(side: Side, S: number, K: number, ivFrac: number, Tyears: number): number | null {
+  if (![S, K, ivFrac, Tyears].every((v) => typeof v === "number" && v > 0)) return null;
+  const sigma = ivFrac;
+  const d2 = (Math.log(S / K) - 0.5 * sigma * sigma * Tyears) / (sigma * Math.sqrt(Tyears));
+  const Nd2 = normCdf(d2);
+  return side === "call" ? normCdf(-d2) : Nd2;
 }
-async function fetchOptionsChain(symbol: string): Promise<OptionsChain> {
-  const res = await fetch(`/api/options?symbol=${encodeURIComponent(symbol)}`);
-  if (!res.ok) throw new Error("Failed to fetch options chain");
-  return res.json();
+function bsGammaPerShare(S: number, K: number, ivFrac: number, Tyears: number): number | null {
+  if (![S, K, ivFrac, Tyears].every((v) => typeof v === "number" && v > 0)) return null;
+  const sigma = ivFrac;
+  const d1 = (Math.log(S / K) + 0.5 * sigma * sigma * Tyears) / (sigma * Math.sqrt(Tyears));
+  const pdf = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
+  return pdf / (S * sigma * Math.sqrt(Tyears)); // same for calls & puts
 }
-
-// ----------------------------- Math Utils -----------------------------
-const erf = (x: number) => {
-  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429;
-  const p = 0.3275911;
-  const sign = x < 0 ? -1 : 1;
-  const t = 1 / (1 + p * Math.abs(x));
-  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+function normCdf(x: number) {
+  return 0.5 * (1 + erf(x / Math.SQRT2));
+}
+function erf(x: number) {
+  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+  const sign = x < 0 ? -1 : 1, ax = Math.abs(x), t = 1 / (1 + p * ax);
+  const y = 1 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t) * Math.exp(-ax * ax);
   return sign * y;
-};
-const N = (x: number) => 0.5 * (1 + erf(x / Math.SQRT2));
-
-function riskFreeRateAnnual(): number {
-  return DEFAULT_RISK_FREE;
 }
 
-function d2_forward(S: number, K: number, T: number, iv: number, r: number, q: number): number {
-  const sigma = Math.max(iv, 0.01);
-  const TT = Math.max(T, 1 / 365);
-  const F = S * Math.exp((r - q) * TT);
-  return (Math.log(F / K) - 0.5 * sigma * sigma * TT) / (sigma * Math.sqrt(TT));
-}
-
-function probOTM_forwardD2(
-  S: number,
-  K: number,
-  Tyrs: number,
-  iv: number,
-  r: number,
-  q: number,
-  type: OptionType
-): number {
-  const d2 = d2_forward(S, K, Tyrs, iv, r, q);
-  return type === "call" ? N(-d2) : N(d2);
-}
-
-function bsDelta(
-  S: number, K: number, T: number, iv: number, r: number, q: number, type: OptionType
-): number {
-  const sigma = Math.max(iv, 0.01);
-  const TT = Math.max(T, 1 / 365);
-  const F = S * Math.exp((r - q) * TT);
-  const d1 = (Math.log(F / K) + 0.5 * sigma * sigma * TT) / (sigma * Math.sqrt(TT));
-  const callDelta = Math.exp(-q * TT) * N(d1);
-  return type === "call" ? callDelta : callDelta - Math.exp(-q * TT);
-}
-
-function bsGamma(S: number, K: number, T: number, iv: number, r: number, q: number): number {
-  const sigma = Math.max(iv, 0.01);
-  const TT = Math.max(T, 1 / 365);
-  const F = S * Math.exp((r - q) * TT);
-  const d1 = (Math.log(F / K) + 0.5 * sigma * sigma * TT) / (sigma * Math.sqrt(TT));
-  const nPrime = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
-  return (Math.exp(-q * TT) * nPrime) / (S * sigma * Math.sqrt(TT));
-}
-
-// Interpolate IV within a single expiry in log-moneyness space
-function interpolateIV_logMoneyness(
-  S: number,
-  ivPoints: Array<{ K: number; iv: number }>,
-  targetK: number
-): number | null {
-  const pts = ivPoints
-    .filter((p) => isFinite(p.K) && p.K > 0 && isFinite(p.iv) && p.iv > 0)
-    .map((p) => ({ x: Math.log(p.K / S), y: p.iv }))
-    .sort((a, b) => a.x - b.x);
-
-  if (pts.length === 0) return null;
-  const tx = Math.log(targetK / S);
-
-  for (const p of pts) if (Math.abs(p.x - tx) < 1e-12) return p.y;
-  if (tx <= pts[0].x) return pts[0].y;
-  if (tx >= pts[pts.length - 1].x) return pts[pts.length - 1].y;
-
-  for (let i = 1; i < pts.length; i++) {
-    const L = pts[i - 1], R = pts[i];
-    if (tx >= L.x && tx <= R.x) {
-      const t = (tx - L.x) / (R.x - L.x);
-      return L.y + t * (R.y - L.y);
-    }
-  }
-  return pts[0].y;
-}
-
-// ----------------------------- Yield Goal helpers -----------------------------
-function yieldGoalByDTE(dte: number): number {
-  if (dte >= 22 && dte <= 31) return 0.004; // 0.40%
-  if (dte >= 15 && dte <= 21) return 0.003; // 0.30%
-  if (dte >= 8 && dte <= 14) return 0.0018; // 0.18%
-  return 0.0009; // 0–7 DTE
-}
-
-const fmtPct = (v: number) => (isFinite(v) ? (v * 100).toFixed(2) + "%" : "—");
-const fmtBps = (v: number) => (isFinite(v) ? `${Math.round(v)} bps` : "—");
-const fmt2 = (v: number) => (isFinite(v) ? v.toFixed(2) : "—");
-
-// ----------------------------- Component -----------------------------
-type View = "yields" | "chain";
-
+/* ---------- Component ---------- */
 export default function App() {
-  const [symbol, setSymbol] = useState("AMZN");
-  const [quote, setQuote] = useState<Quote | null>(null);
-  const [chain, setChain] = useState<OptionsChain>([]);
-  const [view, setView] = useState<View>("yields");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [symbol, setSymbol] = useState("");
+  const [price, setPrice] = useState<number | null>(null);
+  const [currency, setCurrency] = useState<string | null>(null);
+  const [err, setErr] = useState("");
 
-  async function refreshPriceAnd(viewToShow: View) {
+  const [loading, setLoading] = useState(false);     // one loader for flows
+  const [chainErr, setChainErr] = useState("");
+  const [expiries, setExpiries] = useState<ExpirySlice[]>([]);
+  const [uPrice, setUPrice] = useState<number | null>(null);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const [view, setView] = useState<ViewMode>(null);
+
+  /* ---------- Actions ---------- */
+  const updateQuote = async (s: string) => {
+    setErr("");
     try {
-      setLoading(true);
-      setError(null);
-      const [q, c] = await Promise.all([fetchQuote(symbol.trim()), fetchOptionsChain(symbol.trim())]);
-      setQuote(q);
-      setChain(Array.isArray(c) ? c : []);
-      setView(viewToShow);
+      const res = await fetch(`/api/quote?symbol=${encodeURIComponent(s)}`);
+      const text = await res.text();
+      if (!res.ok) throw new Error(text);
+      const json = JSON.parse(text);
+      if (typeof json?.price !== "number") throw new Error("Price not found");
+      setPrice(json.price);
+      setCurrency(json.currency ?? null);
     } catch (e: any) {
-      setError(e?.message ?? "Something went wrong");
+      setPrice(null);
+      setCurrency(null);
+      throw new Error(e?.message || "Quote fetch failed");
+    }
+  };
+
+  const fetchOptions = async (s: string) => {
+    const url = `/api/options?symbol=${encodeURIComponent(s)}`;
+    const res = await fetch(url);
+    const text = await res.text();
+    if (!res.ok) throw new Error(text);
+    const json = JSON.parse(text);
+    if (!json?.expiries?.length) throw new Error("No options data found.");
+    setUPrice(typeof json.underlierPrice === "number" ? json.underlierPrice : null);
+    setExpiries(json.expiries);
+  };
+
+  const runFlow = async (targetView: ViewMode) => {
+    const s = symbol.trim().toUpperCase();
+    setSymbol(s);
+    if (!s) return setErr("Enter a ticker first.");
+    setLoading(true);
+    setChainErr("");
+    try {
+      await updateQuote(s);
+      await fetchOptions(s);
+      setView(targetView);
+      setActiveIdx(0);
+    } catch (e: any) {
+      setChainErr(e?.message || "Options fetch failed");
     } finally {
       setLoading(false);
     }
-  }
+  };
 
-  // Group chain by valid expiry for IV interpolation
-  const chainByExpiry = useMemo(() => {
-    const map = new Map<string, ChainLeg[]>();
-    for (const leg of chain) {
-      const k = typeof leg?.expiry === "string" && leg.expiry ? leg.expiry : null;
-      if (!k) continue; // skip invalid expiries
-      if (!map.has(k)) map.set(k, []);
-      map.get(k)!.push(leg);
+  /* ---------- Derived: Top Yields (OTM only), merged & sorted ---------- */
+  const topYields = useMemo(() => {
+    if (!expiries.length || uPrice == null) return null;
+
+    const now = nowMs();
+
+    // Precompute (expiry -> DTE) once
+    const expDte = expiries.map((ex) => ({
+      ex,
+      dte: daysBetween(now, Date.parse(ex.expiry)),
+    }));
+
+    // For each target DTE, select nearest expiry once
+    const nearestByBucket = new Map<number, { ex: ExpirySlice; dte: number }>();
+    for (const target of DTE_BUCKETS) {
+      let best = null as null | { ex: ExpirySlice; dte: number; diff: number };
+      for (const e of expDte) {
+        const diff = Math.abs(e.dte - target);
+        if (!best || diff < best.diff) best = { ex: e.ex, dte: e.dte, diff };
+      }
+      if (best) nearestByBucket.set(target, { ex: best.ex, dte: best.dte });
     }
-    return map;
-  }, [chain]);
 
-  // Build Yields table rows
-  const yieldRows = useMemo(() => {
-    if (!quote || chain.length === 0) return [];
-    const spot = quote.price;
-    const now = Date.now();
+    const callsAll: YieldRow[] = [];
+    const putsAll: YieldRow[] = [];
 
-    const rows: Array<{
-      type: OptionType;
-      ticker: string;
-      strike: number;
-      expiry: string;
-      dte: number;
-      probOtm: number;
-      yieldDec: number;
-      delta: number;
-      gamma: number;
-      netGamma?: number;
-      ivUsed: number;
-      yieldGoal: number;
-      vsGoalBps: number;
-      oi?: number;
-      premium: number;
-    }> = [];
+    for (const target of DTE_BUCKETS) {
+      const near = nearestByBucket.get(target);
+      if (!near) continue;
 
-    for (const [expiry, legs] of chainByExpiry.entries()) {
-      const expiryMs = Date.parse(expiry);
-      if (!isFinite(expiryMs)) continue; // bad date -> skip
+      const Tyears = Math.max(1 / 365, near.dte / 365);
 
-      const dte = Math.max(0, Math.round((expiryMs - now) / (1000 * 60 * 60 * 24)));
-      const TyrsRaw = (expiryMs - now) / (365 * 24 * 60 * 60 * 1000);
-      const Tyrs = isFinite(TyrsRaw) ? Math.max(1 / 365, TyrsRaw) : 1 / 365;
+      for (const o of near.ex.options) {
+        if (typeof o.bid !== "number" || typeof o.strike !== "number" || o.strike <= 0) continue;
+        if (typeof o.iv !== "number" || o.iv <= 0) continue;
 
-      // IV points for this expiry
-      const ivPoints = legs
-        .filter((x) => isFinite(x?.strike ?? NaN) && (x!.strike as number) > 0 && isFinite(x?.iv ?? NaN) && (x!.iv as number) > 0)
-        .map((x) => ({ K: x!.strike as number, iv: x!.iv as number }));
+        // OTM only
+        if (o.type === "call" && !(o.strike > uPrice)) continue;
+        if (o.type === "put" && !(o.strike < uPrice)) continue;
 
-      const q = Math.max(0, quote.dividendYield ?? 0);
-      const r = riskFreeRateAnnual();
+        const p = probOTM(o.type, uPrice, o.strike, o.iv / 100, Tyears);
+        if (p == null) continue;
+        const probPct = p * 100;
+        if (probPct < MIN_PROB_OTM) continue;
 
-      for (const leg of legs) {
-        const type = leg.type;
-        const K = leg.strike;
-        if ((type !== "call" && type !== "put") || !isFinite(K ?? NaN) || (K as number) <= 0) continue;
+        // Net Gamma (per-contract)
+        // prefer API gamma (per share) if present; else compute BS gamma per share
+        const perShareGamma =
+          typeof o.gamma === "number" && isFinite(o.gamma)
+            ? o.gamma
+            : bsGammaPerShare(uPrice, o.strike, o.iv / 100, Tyears);
+        const netGamma = typeof perShareGamma === "number" ? perShareGamma * CONTRACT_MULTIPLIER : null;
 
-        // Premium: prefer last, fallback to mid, else bid
-        const hasBid = isFinite(leg.bid ?? NaN), hasAsk = isFinite(leg.ask ?? NaN);
-        const mid = hasBid && hasAsk ? (((leg.bid as number) + (leg.ask as number)) / 2) : undefined;
-        const premium = isFinite(leg.last ?? NaN)
-          ? (leg.last as number)
-          : isFinite(mid ?? NaN)
-          ? (mid as number)
-          : (hasBid ? (leg.bid as number) : NaN);
-        if (!isFinite(premium) || premium <= 0) continue;
-
-        // IV selection: per-strike if valid, else interpolate, else fallback
-        let iv = leg.iv ?? NaN;
-        if (!isFinite(iv) || iv <= 0) {
-          const interp = interpolateIV_logMoneyness(spot, ivPoints, K as number);
-          if (isFinite(interp ?? NaN)) iv = interp as number;
-        }
-        if (!isFinite(iv) || iv <= 0) iv = 0.25;
-
-        // Prob OTM (forward-based d2)
-        const probOtm = probOTM_forwardD2(spot, K as number, Tyrs, iv, r, q, type);
-        if (!isFinite(probOtm) || probOtm < 0.60) continue;
-
-        // Delta/Gamma (prefer API values if present)
-        const delta = isFinite(leg.delta ?? NaN)
-          ? (leg.delta as number)
-          : bsDelta(spot, K as number, Tyrs, iv, r, q, type);
-
-        const gammaSpot = isFinite(leg.gamma ?? NaN)
-          ? (leg.gamma as number)
-          : bsGamma(spot, K as number, Tyrs, iv, r, q);
-
-        // NetGamma: gamma per contract * 100 * OI (approx)
-        const oi = leg.openInterest;
-        const netGamma = isFinite(oi ?? NaN) ? gammaSpot * 100 * (oi as number) : undefined;
-
-        // Yield (decimal) — simple non-annualised premium/collateral
-        const collateral = type === "put" ? (K as number) : spot;
-        const yieldDec = premium / collateral;
-
-        const yieldGoal = yieldGoalByDTE(dte);
-        const vsGoalBps = (yieldDec - yieldGoal) * 10000;
-
-        rows.push({
-          type,
-          ticker: quote.symbol,
-          strike: K as number,
-          expiry,
-          dte,
-          probOtm,
-          yieldDec,
-          delta,
-          gamma: gammaSpot,
+        const row: YieldRow = {
+          strike: o.strike,
+          bid: o.bid,
+          yieldPct: (o.bid / o.strike) * 100,
+          probOTM: probPct,
+          dte: near.dte,
+          delta: o.delta,
+          iv: o.iv,
           netGamma,
-          ivUsed: iv,
-          yieldGoal,
-          vsGoalBps,
-          oi,
-          premium,
-        });
+          expiry: near.ex.expiry,
+          side: o.type,
+        };
+
+        (o.type === "call" ? callsAll : putsAll).push(row);
       }
     }
 
-    return rows.sort((a, b) => b.yieldDec - a.yieldDec).slice(0, 10);
-  }, [quote, chain, chainByExpiry]);
+    // dedupe & sort
+    const dedupe = (arr: YieldRow[]) => {
+      const seen = new Set<string>();
+      const out: YieldRow[] = [];
+      for (const r of arr) {
+        const k = uniqKey(r);
+        if (!seen.has(k)) { seen.add(k); out.push(r); }
+      }
+      return out;
+    };
 
-  // ----------------------------- Render -----------------------------
+    const callsTop = dedupe(callsAll).sort((a, b) => b.yieldPct - a.yieldPct).slice(0, 10);
+    const putsTop  = dedupe(putsAll ).sort((a, b) => b.yieldPct - a.yieldPct).slice(0, 10);
+
+    return { callsTop, putsTop };
+  }, [expiries, uPrice]);
+
+  /* ---------- Active expiry rows for the chain ---------- */
+  const rows = useMemo(() => {
+    const ex = expiries[activeIdx];
+    if (!ex) return [] as { strike: number; call: OptionSide | null; put: OptionSide | null }[];
+
+    const callsByStrike = new Map<number, OptionSide>();
+    const putsByStrike = new Map<number, OptionSide>();
+    for (const o of ex.options) (o.type === "call" ? callsByStrike : putsByStrike).set(o.strike, o);
+
+    const strikes = Array.from(new Set([...callsByStrike.keys(), ...putsByStrike.keys()])).sort((a, b) => a - b);
+
+    return strikes.map((strike) => ({
+      strike,
+      call: callsByStrike.get(strike) ?? null,
+      put: putsByStrike.get(strike) ?? null,
+    }));
+  }, [expiries, activeIdx]);
+
+  /* ---------- Render ---------- */
   return (
-    <div style={{ maxWidth: 1200, margin: "0 auto", padding: 16, fontFamily: "Inter, system-ui, sans-serif" }}>
-      <h1 style={{ fontSize: 20, marginBottom: 12 }}>Options & Ticker</h1>
+    <div style={{ padding: 24, fontFamily: "system-ui, sans-serif", maxWidth: 1200, margin: "0 auto" }}>
+      <h1>Stock Price Lookup</h1>
 
-      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+      {/* Controls */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <input
           value={symbol}
           onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-          placeholder="Ticker (e.g., AMZN)"
-          style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #ccc", width: 160 }}
+          onKeyDown={(e) => e.key === "Enter" && runFlow("yields")}
+          placeholder="Enter ticker (e.g., AAPL)"
+          style={{ textTransform: "uppercase", padding: 8, minWidth: 220 }}
         />
-        <button
-          onClick={() => refreshPriceAnd("yields")}
-          disabled={loading || !symbol.trim()}
-          style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #ddd", boxShadow: "0 1px 4px rgba(0,0,0,0.1)" }}
-        >
-          Check Yields
+        <button onClick={() => runFlow("yields")} disabled={loading || !symbol.trim()}>
+          {loading && view === "yields" ? "Loading…" : "Check Yields"}
         </button>
-        <button
-          onClick={() => refreshPriceAnd("chain")}
-          disabled={loading || !symbol.trim()}
-          style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #ddd", boxShadow: "0 1px 4px rgba(0,0,0,0.1)" }}
-        >
-          Options Chain
+        <button onClick={() => runFlow("chain")} disabled={loading || !symbol.trim()}>
+          {loading && view === "chain" ? "Loading…" : "Options Chain"}
         </button>
-        {quote && (
-          <div style={{ marginLeft: 12, opacity: 0.85 }}>
-            <strong>{quote.symbol}</strong> spot: ${fmt2(quote.price)}
-          </div>
-        )}
       </div>
 
-      {error && <div style={{ color: "#b00020", marginBottom: 8 }}>{error}</div>}
-      {loading && <div style={{ marginBottom: 8 }}>Loading…</div>}
+      {/* Price + errors */}
+      {err && <p style={{ color: "crimson", marginTop: 8 }}>{err}</p>}
+      {price !== null && !err && (
+        <p style={{ marginTop: 8 }}>
+          Current Price for <strong>{symbol}</strong>: {currency ? `${currency} ` : "$"}
+          {price}
+        </p>
+      )}
+      {chainErr && <p style={{ color: "crimson", marginTop: 8 }}>{chainErr}</p>}
 
-      {!loading && view === "yields" && (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr>
-                <Th>Type</Th>
-                <Th>Ticker</Th>
-                <Th>Strike</Th>
-                <Th>Expiry</Th>
-                <Th>DTE</Th>
-                <Th>Prob OTM</Th>
-                <Th>Yield Goal</Th>
-                <Th>Vs goal</Th>
-                <Th>Yield</Th>
-                <Th>Delta</Th>
-                <Th>Gamma</Th>
-                <Th>Net Gamma</Th>
-                <Th>IV used</Th>
-                <Th>OI</Th>
-                <Th>Premium</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {yieldRows.map((r, idx) => (
-                <tr key={idx} style={{ borderTop: "1px solid #eee" }}>
-                  <Td>{r.type?.toUpperCase?.() ?? "—"}</Td>
-                  <Td>{r.ticker}</Td>
-                  <Td>{fmt2(r.strike)}</Td>
-                  <Td>{typeof r.expiry === "string" ? r.expiry.slice(0, 10) : "—"}</Td>
-                  <Td>{r.dte}</Td>
-                  <Td>{fmtPct(r.probOtm)}</Td>
-                  <Td>{fmtPct(r.yieldGoal)}</Td>
-                  <Td style={{ color: isFinite(r.vsGoalBps) && r.vsGoalBps >= 0 ? "#136f2a" : "#9b1c1c" }}>
-                    {(isFinite(r.vsGoalBps) && r.vsGoalBps > 0 ? "+" : "") + fmtBps(r.vsGoalBps)}
-                  </Td>
-                  <Td>{fmtPct(r.yieldDec)}</Td>
-                  <Td>{fmt2(r.delta)}</Td>
-                  <Td>{isFinite(r.gamma) ? r.gamma.toExponential(3) : "—"}</Td>
-                  <Td>{isFinite(r.netGamma ?? NaN) ? (r.netGamma as number).toExponential(3) : "—"}</Td>
-                  <Td>{fmtPct(r.ivUsed)}</Td>
-                  <Td>{isFinite(r.oi ?? NaN) ? r.oi : "—"}</Td>
-                  <Td>{fmt2(r.premium)}</Td>
-                </tr>
-              ))}
-              {yieldRows.length === 0 && (
-                <tr>
-                  <Td colSpan={15} style={{ padding: 16, textAlign: "center", opacity: 0.7 }}>
-                    No rows (check symbol, data, or OTM ≥ 60% filter).
-                  </Td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+      {/* ---- Show one section at a time ---- */}
+
+      {/* Yields ONLY */}
+      {view === "yields" && topYields && uPrice != null && (
+        <div className="yields-panel">
+          <div className="y-meta">
+            Underlier: <strong>{uPrice}</strong> • Yield = <code>bid / strike</code> • OTM only • Prob OTM ≥ {MIN_PROB_OTM}% • Top 10
+          </div>
+
+          <div className="yields-grid">
+            {/* Calls */}
+            <div className="yield-card">
+              <h4><span className="y-badge">Calls (Top 10)</span></h4>
+              <table className="yield-table">
+                <thead>
+                  <tr>
+                    <th>Strike</th>
+                    <th>DTE</th>
+                    <th>Bid</th>
+                    <th>Delta</th>
+                    <th>Net Gamma</th>
+                    <th>Yield</th>
+                    <th>Prob OTM</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topYields.callsTop.length ? (
+                    topYields.callsTop.map((r) => (
+                      <tr key={`c-${r.expiry}-${r.strike}`}>
+                        <td style={{ textAlign: "left" }}>{r.strike}</td>
+                        <td>{r.dte}</td>
+                        <td>{fmtNum(r.bid)}</td>
+                        <td>{fmtDelta(r.delta)}</td>
+                        <td>{fmtGamma(r.netGamma)}</td>
+                        <td>{fmtPct(r.yieldPct)}%</td>
+                        <td>{fmtPct(r.probOTM)}%</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr><td colSpan={7} style={{ textAlign: "center" }}>—</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Puts */}
+            <div className="yield-card">
+              <h4><span className="y-badge">Puts (Top 10)</span></h4>
+              <table className="yield-table">
+                <thead>
+                  <tr>
+                    <th>Strike</th>
+                    <th>DTE</th>
+                    <th>Bid</th>
+                    <th>Delta</th>
+                    <th>Net Gamma</th>
+                    <th>Yield</th>
+                    <th>Prob OTM</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topYields.putsTop.length ? (
+                    topYields.putsTop.map((r) => (
+                      <tr key={`p-${r.expiry}-${r.strike}`}>
+                        <td style={{ textAlign: "left" }}>{r.strike}</td>
+                        <td>{r.dte}</td>
+                        <td>{fmtNum(r.bid)}</td>
+                        <td>{fmtDelta(r.delta)}</td>
+                        <td>{fmtGamma(r.netGamma)}</td>
+                        <td>{fmtPct(r.yieldPct)}%</td>
+                        <td>{fmtPct(r.probOTM)}%</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr><td colSpan={7} style={{ textAlign: "center" }}>—</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 
-      {!loading && view === "chain" && (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead>
-              <tr>
-                <Th>Type</Th>
-                <Th>Strike</Th>
-                <Th>Expiry</Th>
-                <Th>Bid</Th>
-                <Th>Ask</Th>
-                <Th>Last</Th>
-                <Th>IV</Th>
-                <Th>Delta</Th>
-                <Th>Gamma</Th>
-                <Th>OI</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {chain.map((c, i) => (
-                <tr key={i} style={{ borderTop: "1px solid #eee" }}>
-                  <Td>{c.type?.toUpperCase?.() ?? "—"}</Td>
-                  <Td>{isFinite(c.strike ?? NaN) ? fmt2(c.strike as number) : "—"}</Td>
-                  <Td>{typeof c.expiry === "string" ? c.expiry.slice(0, 10) : "—"}</Td>
-                  <Td>{isFinite(c.bid ?? NaN) ? fmt2(c.bid as number) : "—"}</Td>
-                  <Td>{isFinite(c.ask ?? NaN) ? fmt2(c.ask as number) : "—"}</Td>
-                  <Td>{isFinite(c.last ?? NaN) ? fmt2(c.last as number) : "—"}</Td>
-                  <Td>{isFinite(c.iv ?? NaN) ? fmtPct(c.iv as number) : "—"}</Td>
-                  <Td>{isFinite(c.delta ?? NaN) ? fmt2(c.delta as number) : "—"}</Td>
-                  <Td>{isFinite(c.gamma ?? NaN) ? (c.gamma as number).toExponential(3) : "—"}</Td>
-                  <Td>{isFinite(c.openInterest ?? NaN) ? c.openInterest : "—"}</Td>
-                </tr>
-              ))}
-              {chain.length === 0 && (
-                <tr>
-                  <Td colSpan={10} style={{ padding: 16, textAlign: "center", opacity: 0.7 }}>
-                    No chain loaded yet.
-                  </Td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+      {/* Chain ONLY */}
+      {view === "chain" && expiries.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          {/* Tabs */}
+          <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8 }}>
+            {expiries.map((ex: ExpirySlice, i: number) => (
+              <button
+                key={ex.expiry + i}
+                onClick={() => setActiveIdx(i)}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #d1d5db",
+                  background: i === activeIdx ? "#111827" : "transparent",
+                  color: i === activeIdx ? "#fff" : "#111827",
+                  whiteSpace: "nowrap",
+                  cursor: "pointer",
+                }}
+                title={ex.expiry}
+              >
+                {formatExpiry(ex.expiry)}
+              </button>
+            ))}
+          </div>
+
+          {/* Underlier */}
+          {uPrice !== null && (
+            <div style={{ marginTop: 8, opacity: 0.7 }}>
+              Underlier: <strong>{uPrice}</strong>
+            </div>
+          )}
+
+          {/* Chain table */}
+          <div className="options-wrap">
+            <div className="scroll-xy">
+              <table className="options-table">
+                <thead>
+                  <tr>
+                    <th colSpan={5}>Calls</th>
+                    <th className="strike-sticky">Strike</th>
+                    <th colSpan={5}>Puts</th>
+                  </tr>
+                  <tr>
+                    <th>IV %</th>
+                    <th>Delta</th>
+                    <th>Ask</th>
+                    <th>Bid</th>
+                    <th>Last</th>
+                    <th className="strike-sticky">-</th>
+                    <th>Last</th>
+                    <th>Bid</th>
+                    <th>Ask</th>
+                    <th>Delta</th>
+                    <th>IV %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => {
+                    const c = r.call, p = r.put;
+                    const isAt = uPrice !== null && r.strike === Math.round(uPrice);
+
+                    const callClass =
+                      c && uPrice !== null ? (r.strike < uPrice ? "call-itm" : "call-otm") : "";
+                    const putClass =
+                      p && uPrice !== null ? (r.strike > uPrice ? "put-itm" : "put-otm") : "";
+
+                    return (
+                      <tr key={r.strike}>
+                        <td className={callClass}>{fmtPct(c?.iv)}</td>
+                        <td className={callClass}>{fmtDelta(c?.delta)}</td>
+                        <td className={callClass}>{fmtNum(c?.ask)}</td>
+                        <td className={callClass}>{fmtNum(c?.bid)}</td>
+                        <td className={callClass}>{fmtNum(c?.last)}</td>
+                        <td className={`strike-sticky ${isAt ? "strike-underlier" : ""}`}>{r.strike}</td>
+                        <td className={putClass}>{fmtNum(p?.last)}</td>
+                        <td className={putClass}>{fmtNum(p?.bid)}</td>
+                        <td className={putClass}>{fmtNum(p?.ask)}</td>
+                        <td className={putClass}>{fmtDelta(p?.delta)}</td>
+                        <td className={putClass}>{fmtPct(p?.iv)}</td>
+                      </tr>
+                    );
+                  })}
+                  {rows.length === 0 && (
+                    <tr>
+                      <td colSpan={11} style={{ textAlign: "center", padding: 24 }}>
+                        No data for this expiry.
+                      </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-// ----------------------------- Small UI bits -----------------------------
-function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th
-      style={{
-        textAlign: "left",
-        padding: "10px 8px",
-        fontWeight: 600,
-        borderBottom: "1px solid #ddd",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {children}
-    </th>
-  );
-}
-function Td({
-  children,
-  colSpan,
-  style,
-}: {
-  children: React.ReactNode;
-  colSpan?: number;
-  style?: React.CSSProperties;
-}) {
-  return (
-    <td style={{ padding: "8px 8px", whiteSpace: "nowrap", ...style }} colSpan={colSpan}>
-      {children}
-    </td>
-  );
+/* ---------- Helpers ---------- */
+function formatExpiry(s: string) {
+  const t = Date.parse(s);
+  if (!Number.isNaN(t)) {
+    const d = new Date(t);
+    return d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
+  }
+  return s;
 }
