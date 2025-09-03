@@ -22,9 +22,11 @@ type YieldRow = {
   bid: number;
   yieldPct: number;   // %
   probOTM: number;    // %
+  yieldGoalPct: number; // %
+  vsGoalBps: number;    // basis points (can be +/-)
   dte: number;        // days
   delta?: number | null;
-  iv?: number | null;
+  iv?: number | null; // %
   netGamma?: number | null; // per 100-share contract
   expiry: string;
   side: Side;
@@ -36,6 +38,8 @@ type ViewMode = "yields" | "chain" | null;
 const DTE_BUCKETS = [7, 14, 21, 30] as const;
 const MIN_PROB_OTM = 60; // %
 const CONTRACT_MULTIPLIER = 100;
+const DEFAULT_RISK_FREE = 0.04; // r (annualised)
+const DEFAULT_DIVIDEND_YIELD = 0.0; // q (annualised)
 
 /* ---------- Utils ---------- */
 const nowMs = () => Date.now();
@@ -49,21 +53,15 @@ const fmtGamma = (n?: number | null) =>
   typeof n === "number" && isFinite(n) ? (Math.round(n * 10000) / 10000).toFixed(4) : "—";
 const uniqKey = (r: YieldRow) => `${r.side}|${r.expiry}|${r.strike}`;
 
-/* Black–Scholes components */
-function probOTM(side: Side, S: number, K: number, ivFrac: number, Tyears: number): number | null {
-  if (![S, K, ivFrac, Tyears].every((v) => typeof v === "number" && v > 0)) return null;
-  const sigma = ivFrac;
-  const d2 = (Math.log(S / K) - 0.5 * sigma * sigma * Tyears) / (sigma * Math.sqrt(Tyears));
-  const Nd2 = normCdf(d2);
-  return side === "call" ? normCdf(-d2) : Nd2;
+/* ------ Yield goal helpers (percent values, e.g., 0.40 for 0.40%) ------ */
+function yieldGoalByDTE(dte: number): number {
+  if (dte >= 22 && dte <= 31) return 0.40;
+  if (dte >= 15 && dte <= 21) return 0.30;
+  if (dte >= 8  && dte <= 14) return 0.18;
+  return 0.09; // 0–7 DTE (and anything else)
 }
-function bsGammaPerShare(S: number, K: number, ivFrac: number, Tyears: number): number | null {
-  if (![S, K, ivFrac, Tyears].every((v) => typeof v === "number" && v > 0)) return null;
-  const sigma = ivFrac;
-  const d1 = (Math.log(S / K) + 0.5 * sigma * sigma * Tyears) / (sigma * Math.sqrt(Tyears));
-  const pdf = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
-  return pdf / (S * sigma * Math.sqrt(Tyears)); // same for calls & puts
-}
+
+/* ---------- Normal CDF / erf ---------- */
 function normCdf(x: number) {
   return 0.5 * (1 + erf(x / Math.SQRT2));
 }
@@ -72,6 +70,60 @@ function erf(x: number) {
   const sign = x < 0 ? -1 : 1, ax = Math.abs(x), t = 1 / (1 + p * ax);
   const y = 1 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t) * Math.exp(-ax * ax);
   return sign * y;
+}
+
+/* ---------- Black–Scholes components (forward-based d2) ---------- */
+// Probability an option finishes OTM using forward-based d2.
+// Inputs: ivFrac is decimal (e.g., 0.24), Tyears in years, r = risk-free, q = dividend yield.
+function probOTM_forward(
+  side: Side, S: number, K: number, ivFrac: number, Tyears: number, r = DEFAULT_RISK_FREE, q = DEFAULT_DIVIDEND_YIELD
+): number | null {
+  if (![S, K, ivFrac, Tyears].every((v) => typeof v === "number" && v > 0)) return null;
+  const sigma = Math.max(ivFrac, 0.01);
+  const T = Math.max(Tyears, 1 / 365);
+  const F = S * Math.exp((r - q) * T);
+  const d2 = (Math.log(F / K) - 0.5 * sigma * sigma * T) / (sigma * Math.sqrt(T));
+  const Nd2 = normCdf(d2);
+  return side === "call" ? normCdf(-d2) : Nd2;
+}
+
+function bsGammaPerShare(S: number, K: number, ivFrac: number, Tyears: number): number | null {
+  if (![S, K, ivFrac, Tyears].every((v) => typeof v === "number" && v > 0)) return null;
+  const sigma = ivFrac;
+  const T = Math.max(Tyears, 1 / 365);
+  const d1 = (Math.log(S / K) + 0.5 * sigma * sigma * T) / (sigma * Math.sqrt(T));
+  const pdf = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
+  return pdf / (S * sigma * Math.sqrt(T)); // same for calls & puts
+}
+
+/* ---------- IV interpolation in log-moneyness (per expiry) ---------- */
+// Returns iv as a FRACTION (e.g., 0.24) or null if impossible.
+function interpolateIV_logMoneyness(
+  S: number,
+  points: Array<{ K: number; ivFrac: number }>,
+  targetK: number
+): number | null {
+  const pts = points
+    .filter(p => isFinite(p.K) && p.K > 0 && isFinite(p.ivFrac) && p.ivFrac > 0)
+    .map(p => ({ x: Math.log(p.K / S), y: p.ivFrac }))
+    .sort((a, b) => a.x - b.x);
+  if (pts.length === 0 || !isFinite(targetK) || targetK <= 0) return null;
+
+  const tx = Math.log(targetK / S);
+  // Exact
+  for (const p of pts) if (Math.abs(p.x - tx) < 1e-12) return p.y;
+  // Clamp
+  if (tx <= pts[0].x) return pts[0].y;
+  if (tx >= pts[pts.length - 1].x) return pts[pts.length - 1].y;
+  // Linear interpolate
+  for (let i = 1; i < pts.length; i++) {
+    const L = pts[i - 1], R = pts[i];
+    if (tx >= L.x && tx <= R.x) {
+      const t = (tx - L.x) / (R.x - L.x);
+      return L.y + t * (R.y - L.y);
+    }
+  }
+  return null;
 }
 
 /* ---------- Component ---------- */
@@ -167,35 +219,65 @@ export default function App() {
 
       const Tyears = Math.max(1 / 365, near.dte / 365);
 
+      // Build IV points for this expiry (average across sides if duplicated)
+      const ivPoints: Array<{ K: number; ivFrac: number }> = [];
+      {
+        const tmp = new Map<number, number[]>();
+        for (const o of near.ex.options) {
+          if (typeof o.strike === "number" && o.strike > 0 && typeof o.iv === "number" && o.iv > 0) {
+            if (!tmp.has(o.strike)) tmp.set(o.strike, []);
+            tmp.get(o.strike)!.push(o.iv / 100); // store as fraction
+          }
+        }
+        for (const [K, arr] of tmp.entries()) {
+          const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+          ivPoints.push({ K, ivFrac: mean });
+        }
+      }
+
       for (const o of near.ex.options) {
-        if (typeof o.bid !== "number" || typeof o.strike !== "number" || o.strike <= 0) continue;
-        if (typeof o.iv !== "number" || o.iv <= 0) continue;
+        if (typeof o.bid !== "number" || o.bid <= 0) continue;
+        if (typeof o.strike !== "number" || o.strike <= 0) continue;
 
         // OTM only
         if (o.type === "call" && !(o.strike > uPrice)) continue;
         if (o.type === "put" && !(o.strike < uPrice)) continue;
 
-        const p = probOTM(o.type, uPrice, o.strike, o.iv / 100, Tyears);
+        // Resolve IV (fraction)
+        let ivFrac: number | null =
+          typeof o.iv === "number" && o.iv > 0 ? o.iv / 100 : interpolateIV_logMoneyness(uPrice, ivPoints, o.strike);
+        if (ivFrac == null || !isFinite(ivFrac) || ivFrac <= 0) continue;
+
+        // Prob OTM (forward-based d2 with r, q)
+        const p = probOTM_forward(o.type, uPrice, o.strike, ivFrac, Tyears, DEFAULT_RISK_FREE, DEFAULT_DIVIDEND_YIELD);
         if (p == null) continue;
         const probPct = p * 100;
         if (probPct < MIN_PROB_OTM) continue;
 
         // Net Gamma (per-contract)
-        // prefer API gamma (per share) if present; else compute BS gamma per share
         const perShareGamma =
           typeof o.gamma === "number" && isFinite(o.gamma)
             ? o.gamma
-            : bsGammaPerShare(uPrice, o.strike, o.iv / 100, Tyears);
+            : bsGammaPerShare(uPrice, o.strike, ivFrac, Tyears);
         const netGamma = typeof perShareGamma === "number" ? perShareGamma * CONTRACT_MULTIPLIER : null;
+
+        // Yield (%)
+        const yieldPct = (o.bid / o.strike) * 100;
+
+        // Yield goal & vs goal (bps)
+        const yieldGoalPct = yieldGoalByDTE(near.dte); // percent value, e.g., 0.40
+        const vsGoalBps = (yieldPct - yieldGoalPct) * 100; // 1% = 100 bps
 
         const row: YieldRow = {
           strike: o.strike,
           bid: o.bid,
-          yieldPct: (o.bid / o.strike) * 100,
+          yieldPct,
           probOTM: probPct,
+          yieldGoalPct,
+          vsGoalBps,
           dte: near.dte,
           delta: o.delta,
-          iv: o.iv,
+          iv: typeof o.iv === "number" && o.iv > 0 ? o.iv : Math.round(ivFrac * 10000) / 100, // store as %
           netGamma,
           expiry: near.ex.expiry,
           side: o.type,
@@ -295,6 +377,8 @@ export default function App() {
                     <th>Net Gamma</th>
                     <th>Yield</th>
                     <th>Prob OTM</th>
+                    <th>Yield Goal</th>
+                    <th>Vs goal</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -308,10 +392,12 @@ export default function App() {
                         <td>{fmtGamma(r.netGamma)}</td>
                         <td>{fmtPct(r.yieldPct)}%</td>
                         <td>{fmtPct(r.probOTM)}%</td>
+                        <td>{fmtPct(r.yieldGoalPct)}%</td>
+                        <td>{(r.vsGoalBps >= 0 ? "+" : "") + r.vsGoalBps + " bps"}</td>
                       </tr>
                     ))
                   ) : (
-                    <tr><td colSpan={7} style={{ textAlign: "center" }}>—</td></tr>
+                    <tr><td colSpan={9} style={{ textAlign: "center" }}>—</td></tr>
                   )}
                 </tbody>
               </table>
@@ -330,6 +416,8 @@ export default function App() {
                     <th>Net Gamma</th>
                     <th>Yield</th>
                     <th>Prob OTM</th>
+                    <th>Yield Goal</th>
+                    <th>Vs goal</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -343,10 +431,12 @@ export default function App() {
                         <td>{fmtGamma(r.netGamma)}</td>
                         <td>{fmtPct(r.yieldPct)}%</td>
                         <td>{fmtPct(r.probOTM)}%</td>
+                        <td>{fmtPct(r.yieldGoalPct)}%</td>
+                        <td>{(r.vsGoalBps >= 0 ? "+" : "") + r.vsGoalBps + " bps"}</td>
                       </tr>
                     ))
                   ) : (
-                    <tr><td colSpan={7} style={{ textAlign: "center" }}>—</td></tr>
+                    <tr><td colSpan={9} style={{ textAlign: "center" }}>—</td></tr>
                   )}
                 </tbody>
               </table>
