@@ -50,8 +50,10 @@ const fmtPct = (n?: number | null) =>
 const fmtDelta = (n?: number | null) =>
   typeof n === "number" && isFinite(n) ? (Math.round(n * 100) / 100).toFixed(2) : "—";
 const fmtGamma = (n?: number | null) =>
-  typeof n === "number" && isFinite(n) ? (Math.round(n * 10000) / 10000).toFixed(4) : "—";
+  typeof n === "number" && isFinite(n) ? n.toFixed(2) : "—";
 const uniqKey = (r: YieldRow) => `${r.side}|${r.expiry}|${r.strike}`;
+const fmt0 = (n?: number | null) =>
+  typeof n === "number" && isFinite(n) ? String(Math.round(n)) : "—";
 
 /* ------ Yield goal helpers (percent values, e.g., 0.40 for 0.40%) ------ */
 function yieldGoalByDTE(dte: number): number {
@@ -391,9 +393,9 @@ export default function App() {
                         <td>{fmtDelta(r.delta)}</td>
                         <td>{fmtGamma(r.netGamma)}</td>
                         <td>{fmtPct(r.yieldPct)}%</td>
-                        <td>{fmtPct(r.probOTM)}%</td>
+                        <td>{fmt0(r.probOTM)}%</td>
                         <td>{fmtPct(r.yieldGoalPct)}%</td>
-                        <td>{(r.vsGoalBps >= 0 ? "+" : "") + r.vsGoalBps + " bps"}</td>
+                        <td>{(Math.round(r.vsGoalBps) >= 0 ? "+" : "") + Math.round(r.vsGoalBps) + " bps"}</td>
                       </tr>
                     ))
                   ) : (
@@ -430,9 +432,9 @@ export default function App() {
                         <td>{fmtDelta(r.delta)}</td>
                         <td>{fmtGamma(r.netGamma)}</td>
                         <td>{fmtPct(r.yieldPct)}%</td>
-                        <td>{fmtPct(r.probOTM)}%</td>
+                        <td>{fmt0(r.probOTM)}%</td>
                         <td>{fmtPct(r.yieldGoalPct)}%</td>
-                        <td>{(r.vsGoalBps >= 0 ? "+" : "") + r.vsGoalBps + " bps"}</td>
+                        <td>{(Math.round(r.vsGoalBps) >= 0 ? "+" : "") + Math.round(r.vsGoalBps) + " bps"}</td>
                       </tr>
                     ))
                   ) : (
