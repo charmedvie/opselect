@@ -55,6 +55,37 @@ const uniqKey = (r: YieldRow) => `${r.side}|${r.expiry}|${r.strike}`;
 const fmt0 = (n?: number | null) =>
   typeof n === "number" && isFinite(n) ? String(Math.round(n)) : "—";
 
+/* ---- Gradient helpers for "Vs goal (bps)" ---- */
+const clamp = (x: number, min: number, max: number) => Math.min(max, Math.max(min, x));
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+function bpsCellStyle(value: number, min: number, max: number) {
+  if (!isFinite(value) || !isFinite(min) || !isFinite(max)) return {};
+  const t = max > min ? clamp((value - min) / (max - min), 0, 1) : 0.5;
+  // HSL green ramp: lighter -> darker
+  const l = lerp(92, 32, t);
+  const s = lerp(60, 70, t);
+  const bg = `hsl(140 ${s}% ${l}%)`;
+  const color = l < 50 ? "#fff" : "#111";
+  return {
+    background: bg,
+    color,
+    fontWeight: 600,
+    padding: "0 6px",
+    borderRadius: 6,
+    textAlign: "right",
+    whiteSpace: "nowrap",
+  } as const;
+}
+function minMaxBps(rows: YieldRow[]) {
+  if (!rows.length) return { min: 0, max: 0 };
+  let min = rows[0].vsGoalBps, max = rows[0].vsGoalBps;
+  for (const r of rows) {
+    if (r.vsGoalBps < min) min = r.vsGoalBps;
+    if (r.vsGoalBps > max) max = r.vsGoalBps;
+  }
+  return { min, max };
+}
+
 /* ------ Yield goal helpers (percent values, e.g., 0.40 for 0.40%) ------ */
 function yieldGoalByDTE(dte: number): number {
   if (dte >= 22 && dte <= 31) return 0.40;
@@ -369,79 +400,93 @@ export default function App() {
             {/* Calls */}
             <div className="yield-card">
               <h4><span className="y-badge">Calls (Top 10)</span></h4>
-              <table className="yield-table">
-                <thead>
-                  <tr>
-                    <th>Strike</th>
-                    <th>DTE</th>
-                    <th>Bid</th>
-                    <th>Delta</th>
-                    <th>Net Gamma</th>
-                    <th>Yield</th>
-                    <th>Prob OTM</th>
-                    <th>Yield Goal</th>
-                    <th>Vs goal</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {topYields.callsTop.length ? (
-                    topYields.callsTop.map((r) => (
-                      <tr key={`c-${r.expiry}-${r.strike}`}>
-                        <td style={{ textAlign: "left" }}>{r.strike}</td>
-                        <td>{r.dte}</td>
-                        <td>{fmtNum(r.bid)}</td>
-                        <td>{fmtDelta(r.delta)}</td>
-                        <td>{fmtGamma(r.netGamma)}</td>
-                        <td>{fmtPct(r.yieldPct)}%</td>
-                        <td>{fmt0(r.probOTM)}%</td>
-                        <td>{fmtPct(r.yieldGoalPct)}%</td>
-                        <td>{(Math.round(r.vsGoalBps) >= 0 ? "+" : "") + Math.round(r.vsGoalBps) + " bps"}</td>
+              {(() => {
+                const { min: callsMin, max: callsMax } = minMaxBps(topYields.callsTop);
+                return (
+                  <table className="yield-table">
+                    <thead>
+                      <tr>
+                        <th>Strike</th>
+                        <th>DTE</th>
+                        <th>Bid</th>
+                        <th>Delta</th>
+                        <th>Net Gamma</th>
+                        <th>Yield</th>
+                        <th>Prob OTM</th>
+                        <th>Yield Goal</th>
+                        <th>Vs goal</th>
                       </tr>
-                    ))
-                  ) : (
-                    <tr><td colSpan={9} style={{ textAlign: "center" }}>—</td></tr>
-                  )}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody>
+                      {topYields.callsTop.length ? (
+                        topYields.callsTop.map((r) => (
+                          <tr key={`c-${r.expiry}-${r.strike}`}>
+                            <td style={{ textAlign: "left" }}>{r.strike}</td>
+                            <td>{r.dte}</td>
+                            <td>{fmtNum(r.bid)}</td>
+                            <td>{fmtDelta(r.delta)}</td>
+                            <td>{fmtGamma(r.netGamma)}</td>
+                            <td>{fmtPct(r.yieldPct)}%</td>
+                            <td>{fmt0(r.probOTM)}%</td>
+                            <td>{fmtPct(r.yieldGoalPct)}%</td>
+                            <td style={bpsCellStyle(r.vsGoalBps, callsMin, callsMax)}>
+                              {(Math.round(r.vsGoalBps) >= 0 ? "+" : "") + Math.round(r.vsGoalBps) + " bps"}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr><td colSpan={9} style={{ textAlign: "center" }}>—</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                );
+              })()}
             </div>
 
             {/* Puts */}
             <div className="yield-card">
               <h4><span className="y-badge">Puts (Top 10)</span></h4>
-              <table className="yield-table">
-                <thead>
-                  <tr>
-                    <th>Strike</th>
-                    <th>DTE</th>
-                    <th>Bid</th>
-                    <th>Delta</th>
-                    <th>Net Gamma</th>
-                    <th>Yield</th>
-                    <th>Prob OTM</th>
-                    <th>Yield Goal</th>
-                    <th>Vs goal</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {topYields.putsTop.length ? (
-                    topYields.putsTop.map((r) => (
-                      <tr key={`p-${r.expiry}-${r.strike}`}>
-                        <td style={{ textAlign: "left" }}>{r.strike}</td>
-                        <td>{r.dte}</td>
-                        <td>{fmtNum(r.bid)}</td>
-                        <td>{fmtDelta(r.delta)}</td>
-                        <td>{fmtGamma(r.netGamma)}</td>
-                        <td>{fmtPct(r.yieldPct)}%</td>
-                        <td>{fmt0(r.probOTM)}%</td>
-                        <td>{fmtPct(r.yieldGoalPct)}%</td>
-                        <td>{(Math.round(r.vsGoalBps) >= 0 ? "+" : "") + Math.round(r.vsGoalBps) + " bps"}</td>
+              {(() => {
+                const { min: putsMin, max: putsMax } = minMaxBps(topYields.putsTop);
+                return (
+                  <table className="yield-table">
+                    <thead>
+                      <tr>
+                        <th>Strike</th>
+                        <th>DTE</th>
+                        <th>Bid</th>
+                        <th>Delta</th>
+                        <th>Net Gamma</th>
+                        <th>Yield</th>
+                        <th>Prob OTM</th>
+                        <th>Yield Goal</th>
+                        <th>Vs goal</th>
                       </tr>
-                    ))
-                  ) : (
-                    <tr><td colSpan={9} style={{ textAlign: "center" }}>—</td></tr>
-                  )}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody>
+                      {topYields.putsTop.length ? (
+                        topYields.putsTop.map((r) => (
+                          <tr key={`p-${r.expiry}-${r.strike}`}>
+                            <td style={{ textAlign: "left" }}>{r.strike}</td>
+                            <td>{r.dte}</td>
+                            <td>{fmtNum(r.bid)}</td>
+                            <td>{fmtDelta(r.delta)}</td>
+                            <td>{fmtGamma(r.netGamma)}</td>
+                            <td>{fmtPct(r.yieldPct)}%</td>
+                            <td>{fmt0(r.probOTM)}%</td>
+                            <td>{fmtPct(r.yieldGoalPct)}%</td>
+                            <td style={bpsCellStyle(r.vsGoalBps, putsMin, putsMax)}>
+                              {(Math.round(r.vsGoalBps) >= 0 ? "+" : "") + Math.round(r.vsGoalBps) + " bps"}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr><td colSpan={9} style={{ textAlign: "center" }}>—</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                );
+              })()}
             </div>
           </div>
         </div>
