@@ -288,9 +288,14 @@ export default function App() {
         out.push(r);
       }
     }
-    return out
-  .sort((a, b) => a.dte - b.dte)
-  .slice(0, 10);
+// 1) rank by monthly-extrapolated yield, take top 10
+// 2) then sort those 10 by earliest DTE for display
+return out
+  .map(r => ({ r, yieldM: r.dte ? r.yieldPct * (30 / r.dte) : 0 }))
+  .sort((a, b) => b.yieldM - a.yieldM)
+  .slice(0, 10)
+  .map(x => x.r)
+  .sort((a, b) => a.dte - b.dte || ((b.dte ? b.yieldPct*(30/b.dte):0) - (a.dte ? a.yieldPct*(30/a.dte):0)));
   }, [expiries, uPrice]);
 
   /* ---------- Render ---------- */
