@@ -1,161 +1,130 @@
-/* Vite starter styles (keep if you want) */
-#root {
-  max-width: 1280px;
+/* Base layout */
+.container {
+  padding: 24px;
+  font-family: system-ui, sans-serif;
+  max-width: 1200px;
   margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
 }
-.logo { height: 6em; padding: 1.5em; will-change: filter; transition: filter 300ms; }
-.logo:hover { filter: drop-shadow(0 0 2em #646cffaa); }
-.logo.react:hover { filter: drop-shadow(0 0 2em #61dafbaa); }
-@keyframes logo-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: no-preference) { a:nth-of-type(2) .logo { animation: logo-spin infinite 20s linear; } }
-.card { padding: 2em; }
-.read-the-docs { color: #888; }
+.page-title { margin-bottom: 8px; }
 
-/* ----------------------------- */
-/*   Options Chain Table Styles  */
-/* ----------------------------- */
-
-.options-wrap {
-  margin-top: 12px;
-  border: 1px solid #e5e7eb;
+/* Controls */
+.controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.input {
+  text-transform: uppercase;
+  padding: 10px;
+  min-width: 220px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+}
+.btn {
+  padding: 10px 14px;
   border-radius: 10px;
-  overflow: hidden;
-}
-
-/* scroll container so header/strike can stick */
-.scroll-xy {
-  max-height: 70vh;
-  overflow: auto;            /* both x and y scrollbars as needed */
-}
-
-/* fixed column widths so strike can stick cleanly */
-.options-table {
-  --col-w: 104px;
-  border-collapse: collapse;
-  width: max(100%, calc(11 * var(--col-w)));
-  font-size: 14px;
-  table-layout: fixed;
-}
-
-.options-table th,
-.options-table td {
-  min-width: var(--col-w);
-  text-align: center;
-  padding: 8px 6px;
-  border-bottom: 1px solid #f1f5f9;
-  white-space: nowrap;
-}
-
-/* Sticky header rows on vertical scroll (within .scroll-xy) */
-.options-table thead th {
-  background: #f9fafb;
-  padding: 10px 8px;
-  border-bottom: 1px solid #e5e7eb;
-  position: sticky;
-  top: 0;
-  z-index: 5;
-}
-
-/* Full-row hover highlight (override cell bg) */
-.options-table tbody tr:hover td {
-  background-color: #eef2f7 !important;
+  border: 1px solid transparent;
   cursor: pointer;
 }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-green { border-color: #c7e9d8; background: #eaf7f0; color: #0f5132; }
+.btn-blue  { border-color: #cfe2ff; background: #eef5ff; color: #084298; }
 
-/* Calls: baby blue (OTM lighter) */
-.call-itm { background-color: #bae6fd; }  /* sky-200 */
-.call-otm { background-color: #e0f2fe; }  /* sky-100 */
-
-/* Puts: pastel pink (OTM lighter) */
-.put-itm  { background-color: #fbcfe8; }  /* pink-200 */
-.put-otm  { background-color: #fce7f3; }  /* pink-100 */
-
-.strike-underlier {
-  font-weight: 700;
-  border-top: 2px solid #111;
-  background: #fff !important;
-}
-
-/* Sticky middle Strike column (header + body) */
-.options-table thead .strike-sticky,
-.options-table tbody .strike-sticky {
-  position: sticky;
-  left: calc(5 * var(--col-w)); /* after 5 call columns */
-  z-index: 6;
-}
-.options-table thead .strike-sticky {
-  background: #f9fafb;
-  box-shadow: -1px 0 0 #e5e7eb, 1px 0 0 #e5e7eb;
-}
-.options-table tbody .strike-sticky {
-  background: #fff;
-  box-shadow: -1px 0 0 #f1f5f9, 1px 0 0 #f1f5f9;
-}
-
-/* ----------------------------- */
-/*          Top Yields           */
-/* ----------------------------- */
-
-.yields-panel {
-  margin-top: 16px;
+.badge {
+  display: inline-block;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-weight: 600;
   border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  padding: 12px;
-  text-align: left;
-  background: #fff;
-}
-
-.yields-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.yield-card {
-  border: 1px solid #eef2f7;
-  border-radius: 10px;
-  padding: 10px;
-  background: #fafafa;
-}
-
-.yield-card h4 {
-  margin: 0 0 6px 0;
-  font-size: 13px;
-  font-weight: 700;
+  background: #f8fafc;
   color: #111827;
 }
+.price-badge { background: #fff3cd; color: #7a5d00; border-color: #ffe69c; }
+.underlier-badge { margin: 2px 0 8px; }
 
-.yield-table {
+/* Meta + cards */
+.y-meta { font-size: 12px; opacity: 0.8; margin: 8px 0; }
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; background: #fafafa; }
+.card-label { font-size: 12px; opacity: 0.75; margin-bottom: 4px; }
+.card-value { font-size: 18px; font-weight: 700; }
+
+/* Tables */
+.scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.scroll-xy { overflow: auto; -webkit-overflow-scrolling: touch; }
+
+.yield-table, .options-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  min-width: 700px; /* allow horizontal scroll on phones */
+  font-size: 14px;
 }
-.yield-table th,
-.yield-table td {
-  padding: 6px 4px;
-  border-bottom: 1px solid #f1f5f9;
-  text-align: right;
+.yield-table th, .yield-table td,
+.options-table th, .options-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #e5e7eb;
   white-space: nowrap;
 }
-.yield-table th:first-child,
-.yield-table td:first-child {
-  text-align: left;
+
+.yields-grid { display: grid; gap: 12px; }
+.yield-card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; background: #fff; }
+.y-badge { background: #eef5ff; color: #084298; padding: 4px 8px; border-radius: 8px; }
+
+/* Options chain visuals (kept from your styles if present) */
+.call-itm  { background: #fff1f2; }
+.call-otm  { background: #ffffff; }
+.put-itm   { background: #eff6ff; }
+.put-otm   { background: #ffffff; }
+.strike-sticky { position: sticky; left: 50%; background: #ffffff; }
+
+/* Tabs */
+.tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; }
+.tab {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #111827;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.tab.active { background: #eaf2ff; }
+
+/* Errors */
+.error { color: crimson; margin-top: 8px; }
+
+/* ---------- Mobile tweaks ---------- */
+@media (max-width: 640px) {
+  .container { padding: 16px; }
+  .controls { flex-direction: column; align-items: stretch; }
+  .input { width: 100%; min-width: 0; }
+  .btn { width: 100%; }
+  .price-badge { align-self: flex-start; }
+
+  /* Slightly tighter table text on mobile */
+  .yield-table, .options-table { font-size: 13px; }
+  .yield-table th, .yield-table td,
+  .options-table th, .options-table td { padding: 8px; }
+
+  /* Hide low-priority columns on tiny screens (yields table):
+     Columns: 1 Strike, 2 DTE, 3 Bid, 4 Delta, 5 Yield, 6 Prob, 7 Yield Goal, 8 Vs goal
+     Hide Delta (4) + Yield Goal (7) on small screens
+  */
+  .yield-table th:nth-child(4), .yield-table td:nth-child(4) { display: none; }
+  .yield-table th:nth-child(7), .yield-table td:nth-child(7) { display: none; }
+
+  /* Options table is very wide; rely on horizontal scroll */
+  .options-table { min-width: 900px; }
 }
 
-.y-badge {
-  display: inline-block;
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 999px;
-  background: #eef2ff;
-  border: 1px solid #e0e7ff;
-  color: #3730a3;
-}
-
-.y-meta {
-  font-size: 12px;
-  color: #6b7280;
-  margin-bottom: 8px;
+/* Even smaller phones */
+@media (max-width: 380px) {
+  .yield-table { font-size: 12px; }
+  .yield-table th, .yield-table td { padding: 6px; }
 }
