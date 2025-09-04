@@ -1,4 +1,4 @@
-/* Base layout */
+/* Base */
 * { box-sizing: border-box; }
 :root {
   --radius: 10px;
@@ -68,10 +68,11 @@ body { margin: 0; color: var(--fg); background: #ffffff; }
 .card-label { font-size: 12px; opacity: 0.75; margin-bottom: 4px; }
 .card-value { font-size: 18px; font-weight: 700; }
 
-/* Tables (desktop/tablet) */
+/* Desktop/Tablet defaults */
 .hide-on-mobile { display: block; }
 .show-on-mobile { display: none; }
 
+/* Tables */
 .yield-table, .options-table {
   width: 100%;
   border-collapse: collapse;
@@ -86,74 +87,9 @@ body { margin: 0; color: var(--fg); background: #ffffff; }
 }
 .yields-panel .yield-table tr:hover { filter: brightness(0.98); }
 
+/* Options chain visuals */
 .call-itm  { background: #fff1f2; }
 .call-otm  { background: #ffffff; }
 .put-itm   { background: #eff6ff; }
 .put-otm   { background: #ffffff; }
-.strike-sticky { background: #ffffff; }
-
-.yields-grid { display: grid; gap: 12px; }
-.yield-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; background: #fff; }
-.y-badge { background: #eef5ff; color: #084298; padding: 4px 8px; border-radius: 8px; }
-
-.tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; }
-.tab {
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid #e2e8f0;
-  background: #ffffff;
-  color: #111827;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.tab.active { background: #eaf2ff; }
-
-.error { color: crimson; margin-top: 8px; }
-.empty { padding: 12px; text-align: center; opacity: 0.7; }
-
-/* ---------- Mobile: NO horizontal scroll, tidy stacked cards ---------- */
-@media (max-width: 640px) {
-  .container { padding: 16px; }
-  .page-title { font-size: 18px; }
-
-  .controls { flex-direction: column; align-items: stretch; }
-  .input, .btn { width: 100%; }
-  .badge.price-badge { align-self: flex-start; margin-top: 6px; }
-
-  .hide-on-mobile { display: none; }
-  .show-on-mobile { display: block; }
-
-  /* Generic card list */
-  .card-list { display: grid; gap: 10px; }
-  .mcard {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 10px 12px;
-    background: #ffffff;
-  }
-  .mcard .row {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 6px 0;
-  }
-  .mcard .row + .row { border-top: 1px dashed #e8eaee; }
-  .mcard .k {
-    font-weight: 600;
-    color: #475569;
-    flex: 0 0 42%;
-    max-width: 42%;
-  }
-  .mcard .v {
-    flex: 1 1 auto;
-    text-align: right;
-    overflow-wrap: anywhere; /* wrap long numbers/symbols */
-  }
-
-  /* Slightly smaller text inside mobile cards */
-  .mcard { font-size: 14px; }
-
-  /* Tabs: keep scroll for tabs only (few items, non-data) */
-  .tabs { margin-top: 4px; }
-}
+.strike-sticky {
