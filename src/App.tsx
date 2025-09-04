@@ -289,12 +289,8 @@ export default function App() {
       }
     }
     return out
-      .sort(
-        (a, b) =>
-          (b.dte ? b.yieldPct * (30 / b.dte) : 0) -
-          (a.dte ? a.yieldPct * (30 / a.dte) : 0)
-      )
-      .slice(0, 10);
+  .sort((a, b) => a.dte - b.dte)
+  .slice(0, 10);
   }, [expiries, uPrice]);
 
   /* ---------- Render ---------- */
