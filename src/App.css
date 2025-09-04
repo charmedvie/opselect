@@ -1,11 +1,20 @@
 /* Base layout */
+* { box-sizing: border-box; }
+:root {
+  --radius: 10px;
+  --border: #e5e7eb;
+  --fg: #111827;
+}
+html, body, #root { height: 100%; }
+body { margin: 0; color: var(--fg); background: #ffffff; }
+
 .container {
   padding: 24px;
-  font-family: system-ui, sans-serif;
-  max-width: 1200px;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  max-width: 1100px;
   margin: 0 auto;
 }
-.page-title { margin-bottom: 8px; }
+.page-title { margin: 0 0 12px; font-size: 22px; line-height: 1.2; }
 
 /* Controls */
 .controls {
@@ -16,16 +25,20 @@
 }
 .input {
   text-transform: uppercase;
-  padding: 10px;
+  padding: 12px 12px;
   min-width: 220px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   border: 1px solid #cbd5e1;
+  font-size: 16px; /* prevent iOS zoom */
+  line-height: 1.2;
 }
 .btn {
-  padding: 10px 14px;
-  border-radius: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
   border: 1px solid transparent;
   cursor: pointer;
+  font-size: 16px; /* prevent iOS zoom */
+  line-height: 1.2;
 }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-green { border-color: #c7e9d8; background: #eaf7f0; color: #0f5132; }
@@ -36,26 +49,29 @@
   padding: 6px 10px;
   border-radius: 8px;
   font-weight: 600;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border);
   background: #f8fafc;
   color: #111827;
 }
 .price-badge { background: #fff3cd; color: #7a5d00; border-color: #ffe69c; }
-.underlier-badge { margin: 2px 0 8px; }
+.underlier-badge { margin: 8px 0; }
 
 /* Meta + cards */
-.y-meta { font-size: 12px; opacity: 0.8; margin: 8px 0; }
+.y-meta { font-size: 12px; opacity: 0.8; margin: 10px 0; }
 .info-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
   margin-bottom: 12px;
 }
-.card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; background: #fafafa; }
+.card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; background: #fafafa; }
 .card-label { font-size: 12px; opacity: 0.75; margin-bottom: 4px; }
 .card-value { font-size: 18px; font-weight: 700; }
 
-/* Tables (desktop/tablet default) */
+/* Tables (desktop/tablet) */
+.hide-on-mobile { display: block; }
+.show-on-mobile { display: none; }
+
 .yield-table, .options-table {
   width: 100%;
   border-collapse: collapse;
@@ -64,21 +80,22 @@
 .yield-table th, .yield-table td,
 .options-table th, .options-table td {
   padding: 8px 10px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--border);
   white-space: nowrap;
+  vertical-align: middle;
 }
-.yields-grid { display: grid; gap: 12px; }
-.yield-card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; background: #fff; }
-.y-badge { background: #eef5ff; color: #084298; padding: 4px 8px; border-radius: 8px; }
+.yields-panel .yield-table tr:hover { filter: brightness(0.98); }
 
-/* Options chain visuals */
 .call-itm  { background: #fff1f2; }
 .call-otm  { background: #ffffff; }
 .put-itm   { background: #eff6ff; }
 .put-otm   { background: #ffffff; }
 .strike-sticky { background: #ffffff; }
 
-/* Tabs */
+.yields-grid { display: grid; gap: 12px; }
+.yield-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; background: #fff; }
+.y-badge { background: #eef5ff; color: #084298; padding: 4px 8px; border-radius: 8px; }
+
 .tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; }
 .tab {
   padding: 8px 12px;
@@ -91,51 +108,52 @@
 }
 .tab.active { background: #eaf2ff; }
 
-/* Errors */
 .error { color: crimson; margin-top: 8px; }
+.empty { padding: 12px; text-align: center; opacity: 0.7; }
 
-/* --------- Mobile: turn tables into cards (NO horizontal scroll) --------- */
+/* ---------- Mobile: NO horizontal scroll, tidy stacked cards ---------- */
 @media (max-width: 640px) {
   .container { padding: 16px; }
+  .page-title { font-size: 18px; }
+
   .controls { flex-direction: column; align-items: stretch; }
   .input, .btn { width: 100%; }
-  .price-badge { align-self: flex-start; }
+  .badge.price-badge { align-self: flex-start; margin-top: 6px; }
 
-  /* Cardify any table with .cardified */
-  .cardified thead { display: none; }
-  .cardified, .cardified tbody, .cardified tr, .cardified td {
-    display: block;
-    width: 100%;
-  }
-  .cardified tr {
-    border: 1px solid #e5e7eb;
-    border-radius: 10px;
-    background: #ffffff;
-    margin-bottom: 10px;
-    overflow: hidden;
-  }
-  .cardified td {
-    display: flex;
-    justify-content: space-between;
-    gap: 16px;
+  .hide-on-mobile { display: none; }
+  .show-on-mobile { display: block; }
+
+  /* Generic card list */
+  .card-list { display: grid; gap: 10px; }
+  .mcard {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     padding: 10px 12px;
-    white-space: normal; /* allow wrapping */
+    background: #ffffff;
   }
-  .cardified td::before {
-    content: attr(data-label);
+  .mcard .row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 0;
+  }
+  .mcard .row + .row { border-top: 1px dashed #e8eaee; }
+  .mcard .k {
     font-weight: 600;
     color: #475569;
-    flex: 0 0 auto;
-    max-width: 55%;
+    flex: 0 0 42%;
+    max-width: 42%;
   }
-  .cardified td:last-child { border-bottom: 0; }
+  .mcard .v {
+    flex: 1 1 auto;
+    text-align: right;
+    overflow-wrap: anywhere; /* wrap long numbers/symbols */
+  }
 
-  /* Slightly smaller text inside cards */
-  .cardified { font-size: 13px; }
-}
+  /* Slightly smaller text inside mobile cards */
+  .mcard { font-size: 14px; }
 
-/* even smaller */
-@media (max-width: 380px) {
-  .cardified { font-size: 12px; }
-  .cardified td { padding: 8px 10px; }
+  /* Tabs: keep scroll for tabs only (few items, non-data) */
+  .tabs { margin-top: 4px; }
 }
