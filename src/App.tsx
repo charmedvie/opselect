@@ -11,10 +11,7 @@ type OptionSide = {
   bid?: number | null;
   ask?: number | null;
   delta?: number | null;
-  iv?: number | null;        // % (e.g., 24.5)
-  gamma?: number | null;     // per share, if provided by API
-  openInterest?: number | null; // contracts
-  volume?: number | null;       // contracts
+  iv?: number | null;     // % (e.g., 24.5)
 };
 
 type ExpirySlice = { expiry: string; options: OptionSide[] };
@@ -22,17 +19,13 @@ type ExpirySlice = { expiry: string; options: OptionSide[] };
 type YieldRow = {
   strike: number;
   bid: number;
-  yieldPct: number;          // %
-  probOTM: number;           // %
-  yieldGoalPct: number;      // %
-  vsGoalBps: number;         // bps (+/-)
-  dte: number;               // days
+  yieldPct: number;   // %
+  probOTM: number;    // %
+  yieldGoalPct: number; // %
+  vsGoalBps: number;    // basis points (can be +/-)
+  dte: number;        // days
   delta?: number | null;
-  iv?: number | null;        // %
-  gex?: number | null;       // dealer GEX (contracts * gamma per contract sign-adjusted)
-  pcOi?: number | null;      // put/call OI ratio for that expiry
-  pcOiPut?: number | null;   // totals used for tooltip
-  pcOiCall?: number | null;
+  iv?: number | null; // %
   expiry: string;
   side: Side;
 };
@@ -42,7 +35,6 @@ type ViewMode = "yields" | "chain" | null;
 /* ---------- Constants ---------- */
 const DTE_BUCKETS = [7, 14, 21, 30] as const;
 const MIN_PROB_OTM = 60; // %
-const CONTRACT_MULTIPLIER = 100;
 const DEFAULT_RISK_FREE = 0.04; // r (annualised)
 const DEFAULT_DIVIDEND_YIELD = 0.0; // q (annualised)
 
@@ -57,37 +49,6 @@ const fmtDelta = (n?: number | null) =>
 const fmt0 = (n?: number | null) =>
   typeof n === "number" && isFinite(n) ? String(Math.round(n)) : "—";
 const uniqKey = (r: YieldRow) => `${r.side}|${r.expiry}|${r.strike}`;
-
-/* ---- Gradient helpers for "Vs goal (bps)" ---- */
-const clamp = (x: number, min: number, max: number) => Math.min(max, Math.max(min, x));
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-function bpsCellStyle(value: number, min: number, max: number) {
-  if (!isFinite(value) || !isFinite(min) || !isFinite(max)) return {};
-  const t = max > min ? clamp((value - min) / (max - min), 0, 1) : 0.5;
-  // HSL green ramp: lighter -> darker
-  const l = lerp(92, 32, t);
-  const s = lerp(60, 70, t);
-  const bg = `hsl(140 ${s}% ${l}%)`;
-  const color = l < 50 ? "#fff" : "#111";
-  return {
-    background: bg,
-    color,
-    fontWeight: 600,
-    padding: "0 6px",
-    borderRadius: 6,
-    textAlign: "right",
-    whiteSpace: "nowrap",
-  } as const;
-}
-function minMaxBps(rows: YieldRow[]) {
-  if (!rows.length) return { min: 0, max: 0 };
-  let min = rows[0].vsGoalBps, max = rows[0].vsGoalBps;
-  for (const r of rows) {
-    if (r.vsGoalBps < min) min = r.vsGoalBps;
-    if (r.vsGoalBps > max) max = r.vsGoalBps;
-  }
-  return { min, max };
-}
 
 /* ------ Yield goal helpers (percent values, e.g., 0.40 for 0.40%) ------ */
 function yieldGoalByDTE(dte: number): number {
@@ -109,6 +70,8 @@ function erf(x: number) {
 }
 
 /* ---------- Black–Scholes components (forward-based d2) ---------- */
+// Probability an option finishes OTM using forward-based d2.
+// Inputs: ivFrac is decimal (e.g., 0.24), Tyears in years, r = risk-free, q = dividend yield.
 function probOTM_forward(
   side: Side, S: number, K: number, ivFrac: number, Tyears: number, r = DEFAULT_RISK_FREE, q = DEFAULT_DIVIDEND_YIELD
 ): number | null {
@@ -121,16 +84,8 @@ function probOTM_forward(
   return side === "call" ? normCdf(-d2) : Nd2;
 }
 
-function bsGammaPerShare(S: number, K: number, ivFrac: number, Tyears: number): number | null {
-  if (![S, K, ivFrac, Tyears].every((v) => typeof v === "number" && v > 0)) return null;
-  const sigma = ivFrac;
-  const T = Math.max(Tyears, 1 / 365);
-  const d1 = (Math.log(S / K) + 0.5 * sigma * sigma * T) / (sigma * Math.sqrt(T));
-  const pdf = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
-  return pdf / (S * sigma * Math.sqrt(T)); // same for calls & puts
-}
-
 /* ---------- IV interpolation in log-moneyness (per expiry) ---------- */
+// Returns iv as a FRACTION (e.g., 0.24) or null if impossible.
 function interpolateIV_logMoneyness(
   S: number,
   points: Array<{ K: number; ivFrac: number }>,
@@ -163,7 +118,7 @@ export default function App() {
   const [currency, setCurrency] = useState<string | null>(null);
   const [err, setErr] = useState("");
 
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);     // one loader for flows
   const [chainErr, setChainErr] = useState("");
   const [expiries, setExpiries] = useState<ExpirySlice[]>([]);
   const [uPrice, setUPrice] = useState<number | null>(null);
@@ -219,72 +174,42 @@ export default function App() {
     }
   };
 
-  /* ---------- Global stats (Stock IV & Top lists across all expiries) ---------- */
-  const globalStats = useMemo(() => {
+  /* ---------- Simple Stock IV estimate (unchanged) ---------- */
+  const stockIvPct = useMemo(() => {
     if (!expiries.length || uPrice == null) return null;
-
-    // Estimate stock IV as near-term ATM average (call/put) if possible
     const now = nowMs();
     let best: { ex: ExpirySlice; dte: number } | null = null;
     for (const ex of expiries) {
       const dte = daysBetween(now, Date.parse(ex.expiry));
       if (!best || dte < best.dte) best = { ex, dte };
     }
-    let stockIvPct: number | null = null;
-    if (best) {
-      // nearest strikes to uPrice
-      let nearestCallIv: number | null = null;
-      let nearestPutIv: number | null = null;
-      let minDiffCall = Infinity, minDiffPut = Infinity;
+    if (!best) return null;
 
-      for (const o of best.ex.options) {
-        if (typeof o.strike !== "number" || o.strike <= 0) continue;
-        const diff = Math.abs(o.strike - uPrice);
-        if (o.type === "call" && diff < minDiffCall) {
-          minDiffCall = diff;
-          nearestCallIv = typeof o.iv === "number" ? o.iv : null;
-        }
-        if (o.type === "put" && diff < minDiffPut) {
-          minDiffPut = diff;
-          nearestPutIv = typeof o.iv === "number" ? o.iv : null;
-        }
+    let nearestCallIv: number | null = null;
+    let nearestPutIv: number | null = null;
+    let minDiffCall = Infinity, minDiffPut = Infinity;
+
+    for (const o of best.ex.options) {
+      if (typeof o.strike !== "number" || o.strike <= 0) continue;
+      const diff = Math.abs(o.strike - uPrice);
+      if (o.type === "call" && diff < minDiffCall) {
+        minDiffCall = diff;
+        nearestCallIv = typeof o.iv === "number" ? o.iv : null;
       }
-      const ivs: number[] = [];
-      if (nearestCallIv != null) ivs.push(nearestCallIv);
-      if (nearestPutIv != null) ivs.push(nearestPutIv);
-      if (ivs.length) stockIvPct = Math.round((ivs.reduce((a, b) => a + b, 0) / ivs.length) * 100) / 100;
+      if (o.type === "put" && diff < minDiffPut) {
+        minDiffPut = diff;
+        nearestPutIv = typeof o.iv === "number" ? o.iv : null;
+      }
     }
-
-    // Flatten all options
-    const all = expiries.flatMap(ex => ex.options.map(o => ({ ...o, expiry: ex.expiry })));
-
-    function topN(
-      arr: Array<{ type: Side; strike: number; openInterest?: number | null; volume?: number | null; expiry: string }>,
-      key: "openInterest" | "volume",
-      side: Side,
-      n = 3
-    ) {
-      return arr
-        .filter(x => x.type === side && typeof x[key] === "number" && (x[key] as number) > 0)
-        .sort((a, b) => (b[key]! - a[key]!))
-        .slice(0, n)
-        .map(x => ({
-          strike: x.strike,
-          expiry: x.expiry,
-          value: x[key] as number,
-        }));
-    }
-
-    const topOiCalls = topN(all, "openInterest", "call", 3);
-    const topOiPuts  = topN(all, "openInterest", "put", 3);
-    const topVolCalls = topN(all, "volume", "call", 3);
-    const topVolPuts  = topN(all, "volume", "put", 3);
-
-    return { stockIvPct, topOiCalls, topOiPuts, topVolCalls, topVolPuts };
+    const ivs: number[] = [];
+    if (nearestCallIv != null) ivs.push(nearestCallIv);
+    if (nearestPutIv != null) ivs.push(nearestPutIv);
+    if (!ivs.length) return null;
+    return Math.round((ivs.reduce((a, b) => a + b, 0) / ivs.length) * 100) / 100;
   }, [expiries, uPrice]);
 
-  /* ---------- Derived: Top Yields (OTM only), merged & sorted ---------- */
-  const topYields = useMemo(() => {
+  /* ---------- Derived: Top Yields (PUTS ONLY), with Vs-goal ---------- */
+  const topPuts = useMemo(() => {
     if (!expiries.length || uPrice == null) return null;
 
     const now = nowMs();
@@ -306,7 +231,6 @@ export default function App() {
       if (best) nearestByBucket.set(target, { ex: best.ex, dte: best.dte });
     }
 
-    const callsAll: YieldRow[] = [];
     const putsAll: YieldRow[] = [];
 
     for (const target of DTE_BUCKETS) {
@@ -322,7 +246,7 @@ export default function App() {
         for (const o of near.ex.options) {
           if (typeof o.strike === "number" && o.strike > 0 && typeof o.iv === "number" && o.iv > 0) {
             if (!tmp.has(o.strike)) tmp.set(o.strike, []);
-            tmp.get(o.strike)!.push(o.iv / 100);
+            tmp.get(o.strike)!.push(o.iv / 100); // store as fraction
           }
         }
         for (const [K, arr] of tmp.entries()) {
@@ -331,22 +255,13 @@ export default function App() {
         }
       }
 
-      // Precompute PC OI for this expiry
-      let putOi = 0, callOi = 0;
       for (const o of near.ex.options) {
-        const oi = typeof o.openInterest === "number" ? o.openInterest : 0;
-        if (o.type === "put")  putOi += oi;
-        if (o.type === "call") callOi += oi;
-      }
-      const pcOi = (callOi > 0 ? putOi / callOi : null);
-
-      for (const o of near.ex.options) {
+        if (o.type !== "put") continue; // PUTS ONLY
         if (typeof o.bid !== "number" || o.bid <= 0) continue;
         if (typeof o.strike !== "number" || o.strike <= 0) continue;
 
         // OTM only
-        if (o.type === "call" && !(o.strike > uPrice)) continue;
-        if (o.type === "put" && !(o.strike < uPrice)) continue;
+        if (!(o.strike < uPrice)) continue;
 
         // Resolve IV (fraction)
         let ivFrac: number | null =
@@ -359,22 +274,11 @@ export default function App() {
         const probPct = p * 100;
         if (probPct < MIN_PROB_OTM) continue;
 
-        // Gamma/share (prefer API, else BS)
-        const perShareGamma =
-          typeof o.gamma === "number" && isFinite(o.gamma)
-            ? o.gamma
-            : bsGammaPerShare(uPrice, o.strike, ivFrac, Tyears);
-
-        // Dealer GEX: gamma/share * 100 * OI * sign(call:+1, put:-1)
-        const oi = typeof o.openInterest === "number" ? o.openInterest : 0;
-        const sign = o.type === "call" ? 1 : -1;
-        const gex = typeof perShareGamma === "number" ? perShareGamma * CONTRACT_MULTIPLIER * oi * sign : null;
-
         // Yield (%)
         const yieldPct = (o.bid / o.strike) * 100;
 
         // Yield goal & vs goal (bps)
-        const yieldGoalPct = yieldGoalByDTE(near.dte);
+        const yieldGoalPct = yieldGoalByDTE(near.dte); // percent value, e.g., 0.40
         const vsGoalBps = (yieldPct - yieldGoalPct) * 100; // 1% = 100 bps
 
         const row: YieldRow = {
@@ -386,37 +290,38 @@ export default function App() {
           vsGoalBps,
           dte: near.dte,
           delta: o.delta,
-          iv: typeof o.iv === "number" && o.iv > 0 ? o.iv : Math.round(ivFrac * 10000) / 100, // %
-          gex: gex ?? null,
-          pcOi: pcOi,
-          pcOiPut: putOi,
-          pcOiCall: callOi,
+          iv: typeof o.iv === "number" && o.iv > 0 ? o.iv : Math.round(ivFrac * 10000) / 100, // store as %
           expiry: near.ex.expiry,
           side: o.type,
         };
 
-        (o.type === "call" ? callsAll : putsAll).push(row);
+        putsAll.push(row);
       }
     }
 
     // dedupe & sort
-    const dedupe = (arr: YieldRow[]) => {
-      const seen = new Set<string>();
-      const out: YieldRow[] = [];
-      for (const r of arr) {
-        const k = uniqKey(r);
-        if (!seen.has(k)) { seen.add(k); out.push(r); }
-      }
-      return out;
-    };
-
-    const callsTop = dedupe(callsAll).sort((a, b) => b.yieldPct - a.yieldPct).slice(0, 10);
-    const putsTop  = dedupe(putsAll ).sort((a, b) => b.yieldPct - a.yieldPct).slice(0, 10);
-
-    return { callsTop, putsTop };
+    const seen = new Set<string>();
+    const out: YieldRow[] = [];
+    for (const r of putsAll) {
+      const k = uniqKey(r);
+      if (!seen.has(k)) { seen.add(k); out.push(r); }
+    }
+    const putsTop = out.sort((a, b) => b.yieldPct - a.yieldPct).slice(0, 10);
+    return putsTop;
   }, [expiries, uPrice]);
 
-  /* ---------- Active expiry rows for the chain ---------- */
+  /* ---------- Row gradient (soft greens) based on Vs goal (bps) ---------- */
+  function rowStyle(v: number, min: number, max: number) {
+    const clamp = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));
+    const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+    const t = max > min ? clamp((v - min) / (max - min), 0, 1) : 0.5;
+    // softer than before: very light mint -> soft green
+    const l = lerp(96, 86, t);  // lightness 96% -> 86%
+    const s = lerp(28, 40, t);  // saturation 28% -> 40%
+    return { background: `hsl(140 ${s}% ${l}%)` } as const;
+  }
+
+  /* ---------- Active expiry rows for the chain (unchanged) ---------- */
   const rows = useMemo(() => {
     const ex = expiries[activeIdx];
     if (!ex) return [] as { strike: number; call: OptionSide | null; put: OptionSide | null }[];
@@ -455,7 +360,7 @@ export default function App() {
             padding: "10px 14px",
             borderRadius: 10,
             border: "1px solid #c7e9d8",
-            background: "#eaf7f0", // pastel green
+            background: "#eaf7f0",
             color: "#0f5132",
             cursor: loading || !symbol.trim() ? "not-allowed" : "pointer",
           }}
@@ -469,7 +374,7 @@ export default function App() {
             padding: "10px 14px",
             borderRadius: 10,
             border: "1px solid #cfe2ff",
-            background: "#eef5ff", // pastel blue
+            background: "#eef5ff",
             color: "#084298",
             cursor: loading || !symbol.trim() ? "not-allowed" : "pointer",
           }}
@@ -483,7 +388,7 @@ export default function App() {
               marginLeft: 12,
               padding: "6px 10px",
               borderRadius: 8,
-              background: "#fff3cd", // pastel amber
+              background: "#fff3cd",
               color: "#7a5d00",
               border: "1px solid #ffe69c",
               fontWeight: 600,
@@ -498,15 +403,15 @@ export default function App() {
       {err && <p style={{ color: "crimson", marginTop: 8 }}>{err}</p>}
       {chainErr && <p style={{ color: "crimson", marginTop: 8 }}>{chainErr}</p>}
 
-      {/* ---- Yields ONLY ---- */}
-      {view === "yields" && topYields && uPrice != null && (
+      {/* ---- Yields ONLY (PUTS ONLY) ---- */}
+      {view === "yields" && topPuts && uPrice != null && (
         <div className="yields-panel" style={{ marginTop: 12 }}>
-          {/* Data timestamp */}
+          {/* Timestamp only (as you asked earlier) */}
           <div className="y-meta" style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
             Data timestamp: <strong>{dataTimestamp ?? new Date().toLocaleString()}</strong>
           </div>
 
-          {/* Stats box */}
+          {/* Simple Stock IV box */}
           <div
             style={{
               display: "grid",
@@ -518,115 +423,25 @@ export default function App() {
             <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 12, background: "#fafafa" }}>
               <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 4 }}>Stock IV (est.)</div>
               <div style={{ fontSize: 18, fontWeight: 700 }}>
-                {globalStats?.stockIvPct != null ? `${globalStats.stockIvPct}%` : "—"}
+                {stockIvPct != null ? `${stockIvPct}%` : "—"}
               </div>
-            </div>
-
-            <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 12, background: "#fafafa" }}>
-              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>Top OI — Calls</div>
-              <ol style={{ margin: 0, paddingLeft: 18 }}>
-                {(globalStats?.topOiCalls?.length ? globalStats.topOiCalls : []).map((x, i) => (
-                  <li key={`toic-${i}`} title={x.expiry}>
-                    K {x.strike} • OI {x.value} • {formatExpiry(x.expiry)}
-                  </li>
-                ))}
-                {!globalStats?.topOiCalls?.length && <li>—</li>}
-              </ol>
-            </div>
-
-            <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 12, background: "#fafafa" }}>
-              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>Top OI — Puts</div>
-              <ol style={{ margin: 0, paddingLeft: 18 }}>
-                {(globalStats?.topOiPuts?.length ? globalStats.topOiPuts : []).map((x, i) => (
-                  <li key={`toip-${i}`} title={x.expiry}>
-                    K {x.strike} • OI {x.value} • {formatExpiry(x.expiry)}
-                  </li>
-                ))}
-                {!globalStats?.topOiPuts?.length && <li>—</li>}
-              </ol>
-            </div>
-
-            <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 12, background: "#fafafa" }}>
-              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>Top Volume — Calls</div>
-              <ol style={{ margin: 0, paddingLeft: 18 }}>
-                {(globalStats?.topVolCalls?.length ? globalStats.topVolCalls : []).map((x, i) => (
-                  <li key={`tvc-${i}`} title={x.expiry}>
-                    K {x.strike} • Vol {x.value} • {formatExpiry(x.expiry)}
-                  </li>
-                ))}
-                {!globalStats?.topVolCalls?.length && <li>—</li>}
-              </ol>
-            </div>
-
-            <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 12, background: "#fafafa" }}>
-              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>Top Volume — Puts</div>
-              <ol style={{ margin: 0, paddingLeft: 18 }}>
-                {(globalStats?.topVolPuts?.length ? globalStats.topVolPuts : []).map((x, i) => (
-                  <li key={`tvp-${i}`} title={x.expiry}>
-                    K {x.strike} • Vol {x.value} • {formatExpiry(x.expiry)}
-                  </li>
-                ))}
-                {!globalStats?.topVolPuts?.length && <li>—</li>}
-              </ol>
             </div>
           </div>
 
+          {/* Puts table only, entire row uses soft green gradient by Vs goal */}
           <div className="yields-grid">
-            {/* Calls */}
-            <div className="yield-card">
-              <h4><span className="y-badge">Calls (Top 10)</span></h4>
-              {(() => {
-                const { min: callsMin, max: callsMax } = minMaxBps(topYields.callsTop);
-                return (
-                  <table className="yield-table">
-                    <thead>
-                      <tr>
-                        <th>Strike</th>
-                        <th>DTE</th>
-                        <th>Bid</th>
-                        <th>Delta</th>
-                        <th>GEX</th>
-                        <th>P/C OI</th>
-                        <th>Yield</th>
-                        <th>Prob OTM</th>
-                        <th>Yield Goal</th>
-                        <th>Vs goal</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {topYields.callsTop.length ? (
-                        topYields.callsTop.map((r) => (
-                          <tr key={`c-${r.expiry}-${r.strike}`}>
-                            <td style={{ textAlign: "left" }}>{r.strike}</td>
-                            <td>{r.dte}</td>
-                            <td>{fmtNum(r.bid)}</td>
-                            <td>{fmtDelta(r.delta)}</td>
-                            <td>{fmt0(r.gex)}</td>
-                            <td title={`Put OI ${fmtNum(r.pcOiPut)} • Call OI ${fmtNum(r.pcOiCall)}`}>
-                              {r.pcOi != null && isFinite(r.pcOi) ? (Math.round(r.pcOi * 100) / 100).toFixed(2) : "—"}
-                            </td>
-                            <td>{fmtPct(r.yieldPct)}%</td>
-                            <td>{fmt0(r.probOTM)}%</td>
-                            <td>{fmtPct(r.yieldGoalPct)}%</td>
-                            <td style={bpsCellStyle(r.vsGoalBps, callsMin, callsMax)}>
-                              {(Math.round(r.vsGoalBps) >= 0 ? "+" : "") + Math.round(r.vsGoalBps) + " bps"}
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr><td colSpan={10} style={{ textAlign: "center" }}>—</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                );
-              })()}
-            </div>
-
-            {/* Puts */}
             <div className="yield-card">
               <h4><span className="y-badge">Puts (Top 10)</span></h4>
               {(() => {
-                const { min: putsMin, max: putsMax } = minMaxBps(topYields.putsTop);
+                const puts = topPuts ?? [];
+                let min = 0, max = 0;
+                if (puts.length) {
+                  min = puts[0].vsGoalBps; max = puts[0].vsGoalBps;
+                  for (const r of puts) {
+                    if (r.vsGoalBps < min) min = r.vsGoalBps;
+                    if (r.vsGoalBps > max) max = r.vsGoalBps;
+                  }
+                }
                 return (
                   <table className="yield-table">
                     <thead>
@@ -635,8 +450,6 @@ export default function App() {
                         <th>DTE</th>
                         <th>Bid</th>
                         <th>Delta</th>
-                        <th>GEX</th>
-                        <th>P/C OI</th>
                         <th>Yield</th>
                         <th>Prob OTM</th>
                         <th>Yield Goal</th>
@@ -644,27 +457,21 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {topYields.putsTop.length ? (
-                        topYields.putsTop.map((r) => (
-                          <tr key={`p-${r.expiry}-${r.strike}`}>
+                      {puts.length ? (
+                        puts.map((r) => (
+                          <tr key={`p-${r.expiry}-${r.strike}`} style={rowStyle(r.vsGoalBps, min, max)}>
                             <td style={{ textAlign: "left" }}>{r.strike}</td>
                             <td>{r.dte}</td>
                             <td>{fmtNum(r.bid)}</td>
                             <td>{fmtDelta(r.delta)}</td>
-                            <td>{fmt0(r.gex)}</td>
-                            <td title={`Put OI ${fmtNum(r.pcOiPut)} • Call OI ${fmtNum(r.pcOiCall)}`}>
-                              {r.pcOi != null && isFinite(r.pcOi) ? (Math.round(r.pcOi * 100) / 100).toFixed(2) : "—"}
-                            </td>
                             <td>{fmtPct(r.yieldPct)}%</td>
                             <td>{fmt0(r.probOTM)}%</td>
                             <td>{fmtPct(r.yieldGoalPct)}%</td>
-                            <td style={bpsCellStyle(r.vsGoalBps, putsMin, putsMax)}>
-                              {(Math.round(r.vsGoalBps) >= 0 ? "+" : "") + Math.round(r.vsGoalBps) + " bps"}
-                            </td>
+                            <td>{(Math.round(r.vsGoalBps) >= 0 ? "+" : "") + Math.round(r.vsGoalBps) + " bps"}</td>
                           </tr>
                         ))
                       ) : (
-                        <tr><td colSpan={10} style={{ textAlign: "center" }}>—</td></tr>
+                        <tr><td colSpan={8} style={{ textAlign: "center" }}>—</td></tr>
                       )}
                     </tbody>
                   </table>
@@ -675,7 +482,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ---- Chain ONLY ---- */}
+      {/* ---- Chain ONLY (unchanged) ---- */}
       {view === "chain" && expiries.length > 0 && (
         <div style={{ marginTop: 16 }}>
           {/* Tabs */}
@@ -700,7 +507,6 @@ export default function App() {
             ))}
           </div>
 
-          {/* Data timestamp for chain too */}
           <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
             Data timestamp: <strong>{dataTimestamp ?? new Date().toLocaleString()}</strong>
           </div>
