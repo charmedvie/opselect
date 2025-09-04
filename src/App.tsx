@@ -70,8 +70,6 @@ function erf(x: number) {
 }
 
 /* ---------- Black–Scholes components (forward-based d2) ---------- */
-// Probability an option finishes OTM using forward-based d2.
-// Inputs: ivFrac is decimal (e.g., 0.24), Tyears in years, r = risk-free, q = dividend yield.
 function probOTM_forward(
   side: Side, S: number, K: number, ivFrac: number, Tyears: number, r = DEFAULT_RISK_FREE, q = DEFAULT_DIVIDEND_YIELD
 ): number | null {
@@ -85,7 +83,6 @@ function probOTM_forward(
 }
 
 /* ---------- IV interpolation in log-moneyness (per expiry) ---------- */
-// Returns iv as a FRACTION (e.g., 0.24) or null if impossible.
 function interpolateIV_logMoneyness(
   S: number,
   points: Array<{ K: number; ivFrac: number }>,
@@ -341,90 +338,49 @@ export default function App() {
 
   /* ---------- Render ---------- */
   return (
-    <div style={{ padding: 24, fontFamily: "system-ui, sans-serif", maxWidth: 1200, margin: "0 auto" }}>
-      <h1 style={{ marginBottom: 8 }}>Options Selector</h1>
+    <div className="container">
+      <h1 className="page-title">Options Selector</h1>
 
       {/* Controls */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+      <div className="controls">
         <input
           value={symbol}
           onChange={(e) => setSymbol(e.target.value.toUpperCase())}
           onKeyDown={(e) => e.key === "Enter" && runFlow("yields")}
           placeholder="Enter ticker (e.g., AAPL)"
-          style={{ textTransform: "uppercase", padding: 10, minWidth: 220, borderRadius: 8, border: "1px solid #cbd5e1" }}
+          className="input"
         />
-        <button
-          onClick={() => runFlow("yields")}
-          disabled={loading || !symbol.trim()}
-          style={{
-            padding: "10px 14px",
-            borderRadius: 10,
-            border: "1px solid #c7e9d8",
-            background: "#eaf7f0",
-            color: "#0f5132",
-            cursor: loading || !symbol.trim() ? "not-allowed" : "pointer",
-          }}
-        >
+        <button onClick={() => runFlow("yields")} disabled={loading || !symbol.trim()} className="btn btn-green">
           {loading && view === "yields" ? "Loading…" : "Check Yields"}
         </button>
-        <button
-          onClick={() => runFlow("chain")}
-          disabled={loading || !symbol.trim()}
-          style={{
-            padding: "10px 14px",
-            borderRadius: 10,
-            border: "1px solid #cfe2ff",
-            background: "#eef5ff",
-            color: "#084298",
-            cursor: loading || !symbol.trim() ? "not-allowed" : "pointer",
-          }}
-        >
+        <button onClick={() => runFlow("chain")} disabled={loading || !symbol.trim()} className="btn btn-blue">
           {loading && view === "chain" ? "Loading…" : "Options Chain"}
         </button>
 
         {price !== null && !err && (
-          <span
-            style={{
-              marginLeft: 12,
-              padding: "6px 10px",
-              borderRadius: 8,
-              background: "#fff3cd",
-              color: "#7a5d00",
-              border: "1px solid #ffe69c",
-              fontWeight: 600,
-            }}
-          >
+          <span className="badge price-badge">
             {currency ? `${currency} ` : "$"}{price}
           </span>
         )}
       </div>
 
       {/* Errors */}
-      {err && <p style={{ color: "crimson", marginTop: 8 }}>{err}</p>}
-      {chainErr && <p style={{ color: "crimson", marginTop: 8 }}>{chainErr}</p>}
+      {err && <p className="error">{err}</p>}
+      {chainErr && <p className="error">{chainErr}</p>}
 
       {/* ---- Yields ONLY (PUTS ONLY) ---- */}
       {view === "yields" && topPuts && uPrice != null && (
-        <div className="yields-panel" style={{ marginTop: 12 }}>
-          {/* Timestamp only (as you asked earlier) */}
-          <div className="y-meta" style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
+        <div className="yields-panel">
+          {/* Timestamp only */}
+          <div className="y-meta">
             Data timestamp: <strong>{dataTimestamp ?? new Date().toLocaleString()}</strong>
           </div>
 
           {/* Simple Stock IV box */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-              gap: 12,
-              marginBottom: 12,
-            }}
-          >
-            <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 12, background: "#fafafa" }}>
-              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 4 }}>Stock IV (est.)</div>
-              <div style={{ fontSize: 18, fontWeight: 700 }}>
-                {stockIvPct != null ? `${stockIvPct}%` : "—"}
-              </div>
+          <div className="info-grid">
+            <div className="card">
+              <div className="card-label">Stock IV (est.)</div>
+              <div className="card-value">{stockIvPct != null ? `${stockIvPct}%` : "—"}</div>
             </div>
           </div>
 
@@ -443,38 +399,40 @@ export default function App() {
                   }
                 }
                 return (
-                  <table className="yield-table">
-                    <thead>
-                      <tr>
-                        <th>Strike</th>
-                        <th>DTE</th>
-                        <th>Bid</th>
-                        <th>Delta</th>
-                        <th>Yield</th>
-                        <th>Prob OTM</th>
-                        <th>Yield Goal</th>
-                        <th>Vs goal</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {puts.length ? (
-                        puts.map((r) => (
-                          <tr key={`p-${r.expiry}-${r.strike}`} style={rowStyle(r.vsGoalBps, min, max)}>
-                            <td style={{ textAlign: "left" }}>{r.strike}</td>
-                            <td>{r.dte}</td>
-                            <td>{fmtNum(r.bid)}</td>
-                            <td>{fmtDelta(r.delta)}</td>
-                            <td>{fmtPct(r.yieldPct)}%</td>
-                            <td>{fmt0(r.probOTM)}%</td>
-                            <td>{fmtPct(r.yieldGoalPct)}%</td>
-                            <td>{(Math.round(r.vsGoalBps) >= 0 ? "+" : "") + Math.round(r.vsGoalBps) + " bps"}</td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr><td colSpan={8} style={{ textAlign: "center" }}>—</td></tr>
-                      )}
-                    </tbody>
-                  </table>
+                  <div className="scroll-x">
+                    <table className="yield-table">
+                      <thead>
+                        <tr>
+                          <th>Strike</th>
+                          <th>DTE</th>
+                          <th>Bid</th>
+                          <th>Delta</th>
+                          <th>Yield</th>
+                          <th>Prob OTM</th>
+                          <th>Yield Goal</th>
+                          <th>Vs goal</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {puts.length ? (
+                          puts.map((r) => (
+                            <tr key={`p-${r.expiry}-${r.strike}`} style={rowStyle(r.vsGoalBps, min, max)}>
+                              <td style={{ textAlign: "left" }}>{r.strike}</td>
+                              <td>{r.dte}</td>
+                              <td>{fmtNum(r.bid)}</td>
+                              <td>{fmtDelta(r.delta)}</td>
+                              <td>{fmtPct(r.yieldPct)}%</td>
+                              <td>{fmt0(r.probOTM)}%</td>
+                              <td>{fmtPct(r.yieldGoalPct)}%</td>
+                              <td>{(Math.round(r.vsGoalBps) >= 0 ? "+" : "") + Math.round(r.vsGoalBps) + " bps"}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr><td colSpan={8} style={{ textAlign: "center" }}>—</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 );
               })()}
             </div>
@@ -486,20 +444,12 @@ export default function App() {
       {view === "chain" && expiries.length > 0 && (
         <div style={{ marginTop: 16 }}>
           {/* Tabs */}
-          <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8 }}>
+          <div className="tabs">
             {expiries.map((ex: ExpirySlice, i: number) => (
               <button
                 key={ex.expiry + i}
                 onClick={() => setActiveIdx(i)}
-                style={{
-                  padding: "8px 12px",
-                  borderRadius: 8,
-                  border: "1px solid #e2e8f0",
-                  background: i === activeIdx ? "#eaf2ff" : "#ffffff",
-                  color: "#111827",
-                  whiteSpace: "nowrap",
-                  cursor: "pointer",
-                }}
+                className={`tab ${i === activeIdx ? "active" : ""}`}
                 title={ex.expiry}
               >
                 {formatExpiry(ex.expiry)}
@@ -507,14 +457,13 @@ export default function App() {
             ))}
           </div>
 
-          <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
+          <div className="y-meta">
             Data timestamp: <strong>{dataTimestamp ?? new Date().toLocaleString()}</strong>
           </div>
 
           {/* Underlier badge */}
           {uPrice !== null && (
-            <div style={{ marginTop: 2, marginBottom: 8, display: "inline-block",
-              padding: "4px 8px", borderRadius: 8, background: "#f8fafc", border: "1px solid #e2e8f0" }}>
+            <div className="badge underlier-badge">
               Underlier: <strong>{uPrice}</strong>
             </div>
           )}
