@@ -21,8 +21,8 @@ type YieldRow = {
   bid: number;
   yieldPct: number;   // %
   probOTM: number;    // %
-  yieldGoalPct: number; // %
-  vsGoalBps: number;    // bps (+/-)
+  yieldGoalPct: number; // kept for internal calc compatibility (unused in UI now)
+  vsGoalBps: number;    // kept for compatibility (unused in UI now)
   dte: number;        // days
   delta?: number | null;
   iv?: number | null; // %
@@ -35,8 +35,8 @@ type ViewMode = "yields" | "chain" | null;
 /* ---------- Constants ---------- */
 const DTE_BUCKETS = [7, 14, 21, 30] as const;
 const MIN_PROB_OTM = 60; // %
-const DEFAULT_RISK_FREE = 0.04;
-const DEFAULT_DIVIDEND_YIELD = 0.0;
+const DEFAULT_RISK_FREE = 0.04; // r (annualised)
+const DEFAULT_DIVIDEND_YIELD = 0.0; // q (annualised)
 
 /* ---------- Utils ---------- */
 const nowMs = () => Date.now();
@@ -49,14 +49,6 @@ const fmtDelta = (n?: number | null) =>
 const fmt0 = (n?: number | null) =>
   typeof n === "number" && isFinite(n) ? String(Math.round(n)) : "—";
 const uniqKey = (r: YieldRow) => `${r.side}|${r.expiry}|${r.strike}`;
-
-/* Yield goal */
-function yieldGoalByDTE(dte: number): number {
-  if (dte >= 22 && dte <= 31) return 0.40;
-  if (dte >= 15 && dte <= 21) return 0.30;
-  if (dte >= 8  && dte <= 14) return 0.18;
-  return 0.09;
-}
 
 /* Normal CDF / erf */
 function normCdf(x: number) { return 0.5 * (1 + erf(x / Math.SQRT2)); }
@@ -264,8 +256,10 @@ export default function App() {
         if (probPct < MIN_PROB_OTM) continue;
 
         const yieldPct = (o.bid / o.strike) * 100;
-        const yieldGoalPct = yieldGoalByDTE(near.dte);
-        const vsGoalBps = (yieldPct - yieldGoalPct) * 100;
+
+        // Keep legacy fields for compatibility (not used in UI now)
+        const yieldGoalPct = 0; // unused
+        const vsGoalBps = 0;    // unused
 
         const row: YieldRow = {
           strike: o.strike,
@@ -293,17 +287,17 @@ export default function App() {
     return out.sort((a, b) => b.yieldPct - a.yieldPct).slice(0, 10);
   }, [expiries, uPrice]);
 
-  /* Row gradient (soft greens) */
-  function rowStyle(v: number, min: number, max: number) {
+  /* Row gradient (soft greens) using monthly goal delta */
+  function rowStyleMonthly(vsGoalMBps: number, min: number, max: number) {
     const clamp = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));
     const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-    const t = max > min ? clamp((v - min) / (max - min), 0, 1) : 0.5;
-    const l = lerp(96, 86, t);  // lightness 96% -> 86%
-    const s = lerp(28, 40, t);  // saturation 28% -> 40%
+    const t = max > min ? clamp((vsGoalMBps - min) / (max - min), 0, 1) : 0.5;
+    const l = lerp(96, 86, t);
+    const s = lerp(28, 40, t);
     return { background: `hsl(140 ${s}% ${l}%)` } as const;
   }
 
-  /* Chain rows */
+  /* Chain rows (unchanged) */
   const rows = useMemo(() => {
     const ex = expiries[activeIdx];
     if (!ex) return [] as { strike: number; call: OptionSide | null; put: OptionSide | null }[];
@@ -355,7 +349,7 @@ export default function App() {
       {err && <p className="error">{err}</p>}
       {chainErr && <p className="error">{chainErr}</p>}
 
-      {/* ---- Yields: PUTS ONLY (cards on mobile, table on desktop) ---- */}
+      {/* ---- Yields: PUTS ONLY (with new columns) ---- */}
       {view === "yields" && topPuts && uPrice != null && (
         <div className="yields-panel">
           <div className="y-meta">
@@ -374,38 +368,47 @@ export default function App() {
           <div className="hide-on-mobile">
             {(() => {
               const puts = topPuts ?? [];
+              // Precompute min/max for gradient using Vs Goal (M)
               let min = 0, max = 0;
-              if (puts.length) {
-                min = puts[0].vsGoalBps; max = puts[0].vsGoalBps;
-                for (const r of puts) { if (r.vsGoalBps < min) min = r.vsGoalBps; if (r.vsGoalBps > max) max = r.vsGoalBps; }
+              const vsMList: number[] = [];
+              for (const r of puts) {
+                const yieldM = r.dte > 0 ? r.yieldPct * (30 / r.dte) : 0; // % monthly
+                const vsGoalM = (yieldM - 0.40) * 100; // bps
+                vsMList.push(vsGoalM);
               }
+              if (vsMList.length) { min = Math.min(...vsMList); max = Math.max(...vsMList); }
+
               return (
                 <table className="yield-table">
                   <thead>
                     <tr>
                       <th>Strike</th>
                       <th>DTE</th>
-                      <th>Bid</th>
+                      <th>Expiry Date</th>
                       <th>Delta</th>
-                      <th>Yield</th>
-                      <th>Prob OTM</th>
-                      <th>Yield Goal</th>
-                      <th>Vs goal</th>
+                      <th>Bid</th>
+                      <th>Yield (M)</th>
+                      <th>Vs Goal (M)</th>
+                      <th>OTM Prob</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {puts.length ? puts.map((r) => (
-                      <tr key={`p-${r.expiry}-${r.strike}`} style={rowStyle(r.vsGoalBps, min, max)}>
-                        <td style={{ textAlign: "left" }}>{r.strike}</td>
-                        <td>{r.dte}</td>
-                        <td>{fmtNum(r.bid)}</td>
-                        <td>{fmtDelta(r.delta)}</td>
-                        <td>{fmtPct(r.yieldPct)}%</td>
-                        <td>{fmt0(r.probOTM)}%</td>
-                        <td>{fmtPct(r.yieldGoalPct)}%</td>
-                        <td>{(Math.round(r.vsGoalBps) >= 0 ? "+" : "") + Math.round(r.vsGoalBps) + " bps"}</td>
-                      </tr>
-                    )) : (
+                    {puts.length ? puts.map((r) => {
+                      const yieldM = r.dte > 0 ? r.yieldPct * (30 / r.dte) : 0;
+                      const vsGoalMBps = (yieldM - 0.40) * 100;
+                      return (
+                        <tr key={`p-${r.expiry}-${r.strike}`} style={rowStyleMonthly(vsGoalMBps, min, max)}>
+                          <td style={{ textAlign: "left" }}>{r.strike}</td>
+                          <td>{r.dte}</td>
+                          <td>{formatExpiry(r.expiry)}</td>
+                          <td>{fmtDelta(r.delta)}</td>
+                          <td>{fmtNum(r.bid)}</td>
+                          <td>{fmtPct(yieldM)}%</td>
+                          <td>{(Math.round(vsGoalMBps) >= 0 ? "+" : "") + Math.round(vsGoalMBps) + " bps"}</td>
+                          <td>{fmt0(r.probOTM)}%</td>
+                        </tr>
+                      );
+                    }) : (
                       <tr><td colSpan={8} style={{ textAlign: "center" }}>—</td></tr>
                     )}
                   </tbody>
@@ -414,27 +417,40 @@ export default function App() {
             })()}
           </div>
 
-          {/* Mobile card list (no scroll) */}
+          {/* Mobile card list */}
           <div className="show-on-mobile">
             {(() => {
               const puts = topPuts ?? [];
               if (!puts.length) return <div className="empty">—</div>;
-              let min = puts[0].vsGoalBps, max = puts[0].vsGoalBps;
-              for (const r of puts) { if (r.vsGoalBps < min) min = r.vsGoalBps; if (r.vsGoalBps > max) max = r.vsGoalBps; }
+
+              // min/max for gradient
+              let min = Infinity, max = -Infinity;
+              const calcVs = (r: YieldRow) => ( (r.dte > 0 ? r.yieldPct * (30 / r.dte) : 0) - 0.40 ) * 100;
+              for (const r of puts) {
+                const v = calcVs(r);
+                if (v < min) min = v;
+                if (v > max) max = v;
+              }
+              if (!isFinite(min) || !isFinite(max)) { min = 0; max = 0; }
+
               return (
                 <div className="card-list">
-                  {puts.map((r) => (
-                    <div className="mcard" key={`mp-${r.expiry}-${r.strike}`} style={rowStyle(r.vsGoalBps, min, max)}>
-                      <div className="row"><div className="k">Strike</div><div className="v">{r.strike}</div></div>
-                      <div className="row"><div className="k">DTE</div><div className="v">{r.dte}</div></div>
-                      <div className="row"><div className="k">Bid</div><div className="v">{fmtNum(r.bid)}</div></div>
-                      <div className="row"><div className="k">Delta</div><div className="v">{fmtDelta(r.delta)}</div></div>
-                      <div className="row"><div className="k">Yield</div><div className="v">{fmtPct(r.yieldPct)}%</div></div>
-                      <div className="row"><div className="k">Prob OTM</div><div className="v">{fmt0(r.probOTM)}%</div></div>
-                      <div className="row"><div className="k">Yield Goal</div><div className="v">{fmtPct(r.yieldGoalPct)}%</div></div>
-                      <div className="row"><div className="k">Vs goal</div><div className="v">{(Math.round(r.vsGoalBps) >= 0 ? "+" : "") + Math.round(r.vsGoalBps)} bps</div></div>
-                    </div>
-                  ))}
+                  {puts.map((r) => {
+                    const yieldM = r.dte > 0 ? r.yieldPct * (30 / r.dte) : 0;
+                    const vsGoalMBps = (yieldM - 0.40) * 100;
+                    return (
+                      <div className="mcard" key={`mp-${r.expiry}-${r.strike}`} style={rowStyleMonthly(vsGoalMBps, min, max)}>
+                        <div className="row"><div className="k">Strike</div><div className="v">{r.strike}</div></div>
+                        <div className="row"><div className="k">DTE</div><div className="v">{r.dte}</div></div>
+                        <div className="row"><div className="k">Expiry Date</div><div className="v">{formatExpiry(r.expiry)}</div></div>
+                        <div className="row"><div className="k">Delta</div><div className="v">{fmtDelta(r.delta)}</div></div>
+                        <div className="row"><div className="k">Bid</div><div className="v">{fmtNum(r.bid)}</div></div>
+                        <div className="row"><div className="k">Yield (M)</div><div className="v">{fmtPct(yieldM)}%</div></div>
+                        <div className="row"><div className="k">Vs Goal (M)</div><div className="v">{(Math.round(vsGoalMBps) >= 0 ? "+" : "") + Math.round(vsGoalMBps)} bps</div></div>
+                        <div className="row"><div className="k">OTM Prob</div><div className="v">{fmt0(r.probOTM)}%</div></div>
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })()}
@@ -442,10 +458,10 @@ export default function App() {
         </div>
       )}
 
-      {/* ---- Options Chain: desktop/tablet table; mobile = dropdown + horizontal scroll table ---- */}
+      {/* ---- Options Chain (kept as your last working version with scroll/dropdown) ---- */}
       {view === "chain" && expiries.length > 0 && (
         <div style={{ marginTop: 16 }}>
-          {/* Desktop/Tablet: tabs */}
+          {/* Tabs (desktop) */}
           <div className="tabs hide-on-mobile">
             {expiries.map((ex: ExpirySlice, i: number) => (
               <button
@@ -459,7 +475,7 @@ export default function App() {
             ))}
           </div>
 
-          {/* Mobile: dropdown selector */}
+          {/* Dropdown (mobile) */}
           <div className="show-on-mobile">
             <label className="select-label" htmlFor="expirySelect">Expiry</label>
             <select
@@ -484,7 +500,6 @@ export default function App() {
             </div>
           )}
 
-          {/* Always a table for chain; allow horizontal scroll on mobile */}
           <div className="options-wrap scroll-xy">
             <table className="options-table minwide">
               <thead>
