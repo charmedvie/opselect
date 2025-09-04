@@ -115,7 +115,7 @@ export default function App() {
   const [currency, setCurrency] = useState<string | null>(null);
   const [err, setErr] = useState("");
 
-  const [loading, setLoading] = useState(false);     // one loader for flows
+  const [loading, setLoading] = useState(false);
   const [chainErr, setChainErr] = useState("");
   const [expiries, setExpiries] = useState<ExpirySlice[]>([]);
   const [uPrice, setUPrice] = useState<number | null>(null);
@@ -171,7 +171,7 @@ export default function App() {
     }
   };
 
-  /* ---------- Simple Stock IV estimate (unchanged) ---------- */
+  /* ---------- Simple Stock IV estimate ---------- */
   const stockIvPct = useMemo(() => {
     if (!expiries.length || uPrice == null) return null;
     const now = nowMs();
@@ -205,7 +205,7 @@ export default function App() {
     return Math.round((ivs.reduce((a, b) => a + b, 0) / ivs.length) * 100) / 100;
   }, [expiries, uPrice]);
 
-  /* ---------- Derived: Top Yields (PUTS ONLY), with Vs-goal ---------- */
+  /* ---------- Derived: Top Yields (PUTS ONLY) ---------- */
   const topPuts = useMemo(() => {
     if (!expiries.length || uPrice == null) return null;
 
@@ -243,7 +243,7 @@ export default function App() {
         for (const o of near.ex.options) {
           if (typeof o.strike === "number" && o.strike > 0 && typeof o.iv === "number" && o.iv > 0) {
             if (!tmp.has(o.strike)) tmp.set(o.strike, []);
-            tmp.get(o.strike)!.push(o.iv / 100); // store as fraction
+            tmp.get(o.strike)!.push(o.iv / 100);
           }
         }
         for (const [K, arr] of tmp.entries()) {
@@ -253,7 +253,7 @@ export default function App() {
       }
 
       for (const o of near.ex.options) {
-        if (o.type !== "put") continue; // PUTS ONLY
+        if (o.type !== "put") continue;
         if (typeof o.bid !== "number" || o.bid <= 0) continue;
         if (typeof o.strike !== "number" || o.strike <= 0) continue;
 
@@ -275,7 +275,7 @@ export default function App() {
         const yieldPct = (o.bid / o.strike) * 100;
 
         // Yield goal & vs goal (bps)
-        const yieldGoalPct = yieldGoalByDTE(near.dte); // percent value, e.g., 0.40
+        const yieldGoalPct = yieldGoalByDTE(near.dte); // percent value
         const vsGoalBps = (yieldPct - yieldGoalPct) * 100; // 1% = 100 bps
 
         const row: YieldRow = {
@@ -287,11 +287,10 @@ export default function App() {
           vsGoalBps,
           dte: near.dte,
           delta: o.delta,
-          iv: typeof o.iv === "number" && o.iv > 0 ? o.iv : Math.round(ivFrac * 10000) / 100, // store as %
+          iv: typeof o.iv === "number" && o.iv > 0 ? o.iv : Math.round(ivFrac * 10000) / 100, // %
           expiry: near.ex.expiry,
           side: o.type,
         };
-
         putsAll.push(row);
       }
     }
@@ -307,18 +306,17 @@ export default function App() {
     return putsTop;
   }, [expiries, uPrice]);
 
-  /* ---------- Row gradient (soft greens) based on Vs goal (bps) ---------- */
+  /* ---------- Row gradient (soft greens) ---------- */
   function rowStyle(v: number, min: number, max: number) {
     const clamp = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));
     const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
     const t = max > min ? clamp((v - min) / (max - min), 0, 1) : 0.5;
-    // softer than before: very light mint -> soft green
     const l = lerp(96, 86, t);  // lightness 96% -> 86%
     const s = lerp(28, 40, t);  // saturation 28% -> 40%
     return { background: `hsl(140 ${s}% ${l}%)` } as const;
   }
 
-  /* ---------- Active expiry rows for the chain (unchanged) ---------- */
+  /* ---------- Active expiry rows for the chain ---------- */
   const rows = useMemo(() => {
     const ex = expiries[activeIdx];
     if (!ex) return [] as { strike: number; call: OptionSide | null; put: OptionSide | null }[];
@@ -371,12 +369,11 @@ export default function App() {
       {/* ---- Yields ONLY (PUTS ONLY) ---- */}
       {view === "yields" && topPuts && uPrice != null && (
         <div className="yields-panel">
-          {/* Timestamp only */}
           <div className="y-meta">
             Data timestamp: <strong>{dataTimestamp ?? new Date().toLocaleString()}</strong>
           </div>
 
-          {/* Simple Stock IV box */}
+          {/* Stock IV card */}
           <div className="info-grid">
             <div className="card">
               <div className="card-label">Stock IV (est.)</div>
@@ -384,7 +381,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Puts table only, entire row uses soft green gradient by Vs goal */}
+          {/* Puts table → card layout on mobile (no horizontal scroll) */}
           <div className="yields-grid">
             <div className="yield-card">
               <h4><span className="y-badge">Puts (Top 10)</span></h4>
@@ -393,46 +390,41 @@ export default function App() {
                 let min = 0, max = 0;
                 if (puts.length) {
                   min = puts[0].vsGoalBps; max = puts[0].vsGoalBps;
-                  for (const r of puts) {
-                    if (r.vsGoalBps < min) min = r.vsGoalBps;
-                    if (r.vsGoalBps > max) max = r.vsGoalBps;
-                  }
+                  for (const r of puts) { if (r.vsGoalBps < min) min = r.vsGoalBps; if (r.vsGoalBps > max) max = r.vsGoalBps; }
                 }
                 return (
-                  <div className="scroll-x">
-                    <table className="yield-table">
-                      <thead>
-                        <tr>
-                          <th>Strike</th>
-                          <th>DTE</th>
-                          <th>Bid</th>
-                          <th>Delta</th>
-                          <th>Yield</th>
-                          <th>Prob OTM</th>
-                          <th>Yield Goal</th>
-                          <th>Vs goal</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {puts.length ? (
-                          puts.map((r) => (
-                            <tr key={`p-${r.expiry}-${r.strike}`} style={rowStyle(r.vsGoalBps, min, max)}>
-                              <td style={{ textAlign: "left" }}>{r.strike}</td>
-                              <td>{r.dte}</td>
-                              <td>{fmtNum(r.bid)}</td>
-                              <td>{fmtDelta(r.delta)}</td>
-                              <td>{fmtPct(r.yieldPct)}%</td>
-                              <td>{fmt0(r.probOTM)}%</td>
-                              <td>{fmtPct(r.yieldGoalPct)}%</td>
-                              <td>{(Math.round(r.vsGoalBps) >= 0 ? "+" : "") + Math.round(r.vsGoalBps) + " bps"}</td>
-                            </tr>
-                          ))
-                        ) : (
-                          <tr><td colSpan={8} style={{ textAlign: "center" }}>—</td></tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
+                  <table className="yield-table cardified">
+                    <thead>
+                      <tr>
+                        <th>Strike</th>
+                        <th>DTE</th>
+                        <th>Bid</th>
+                        <th>Delta</th>
+                        <th>Yield</th>
+                        <th>Prob OTM</th>
+                        <th>Yield Goal</th>
+                        <th>Vs goal</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {puts.length ? (
+                        puts.map((r) => (
+                          <tr key={`p-${r.expiry}-${r.strike}`} style={rowStyle(r.vsGoalBps, min, max)}>
+                            <td data-label="Strike" style={{ textAlign: "left" }}>{r.strike}</td>
+                            <td data-label="DTE">{r.dte}</td>
+                            <td data-label="Bid">{fmtNum(r.bid)}</td>
+                            <td data-label="Delta">{fmtDelta(r.delta)}</td>
+                            <td data-label="Yield">{fmtPct(r.yieldPct)}%</td>
+                            <td data-label="Prob OTM">{fmt0(r.probOTM)}%</td>
+                            <td data-label="Yield Goal">{fmtPct(r.yieldGoalPct)}%</td>
+                            <td data-label="Vs goal">{(Math.round(r.vsGoalBps) >= 0 ? "+" : "") + Math.round(r.vsGoalBps) + " bps"}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr><td colSpan={8} style={{ textAlign: "center" }}>—</td></tr>
+                      )}
+                    </tbody>
+                  </table>
                 );
               })()}
             </div>
@@ -440,10 +432,9 @@ export default function App() {
         </div>
       )}
 
-      {/* ---- Chain ONLY (unchanged) ---- */}
+      {/* ---- Chain ONLY (becomes cards on mobile) ---- */}
       {view === "chain" && expiries.length > 0 && (
         <div style={{ marginTop: 16 }}>
-          {/* Tabs */}
           <div className="tabs">
             {expiries.map((ex: ExpirySlice, i: number) => (
               <button
@@ -461,72 +452,62 @@ export default function App() {
             Data timestamp: <strong>{dataTimestamp ?? new Date().toLocaleString()}</strong>
           </div>
 
-          {/* Underlier badge */}
           {uPrice !== null && (
             <div className="badge underlier-badge">
               Underlier: <strong>{uPrice}</strong>
             </div>
           )}
 
-          {/* Chain table */}
           <div className="options-wrap">
-            <div className="scroll-xy">
-              <table className="options-table">
-                <thead>
-                  <tr>
-                    <th colSpan={5}>Calls</th>
-                    <th className="strike-sticky">Strike</th>
-                    <th colSpan={5}>Puts</th>
-                  </tr>
-                  <tr>
-                    <th>IV %</th>
-                    <th>Delta</th>
-                    <th>Ask</th>
-                    <th>Bid</th>
-                    <th>Last</th>
-                    <th className="strike-sticky">-</th>
-                    <th>Last</th>
-                    <th>Bid</th>
-                    <th>Ask</th>
-                    <th>Delta</th>
-                    <th>IV %</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => {
-                    const c = r.call, p = r.put;
-                    const isAt = uPrice !== null && r.strike === Math.round(uPrice);
+            <table className="options-table cardified">
+              <thead>
+                <tr>
+                  <th>IV %</th>
+                  <th>Delta</th>
+                  <th>Ask</th>
+                  <th>Bid</th>
+                  <th>Last</th>
+                  <th className="strike-sticky">Strike</th>
+                  <th>Last</th>
+                  <th>Bid</th>
+                  <th>Ask</th>
+                  <th>Delta</th>
+                  <th>IV %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const c = r.call, p = r.put;
+                  const isAt = uPrice !== null && r.strike === Math.round(uPrice);
+                  const callClass =
+                    c && uPrice !== null ? (r.strike < uPrice ? "call-itm" : "call-otm") : "";
+                  const putClass =
+                    p && uPrice !== null ? (r.strike > uPrice ? "put-itm" : "put-otm") : "";
 
-                    const callClass =
-                      c && uPrice !== null ? (r.strike < uPrice ? "call-itm" : "call-otm") : "";
-                    const putClass =
-                      p && uPrice !== null ? (r.strike > uPrice ? "put-itm" : "put-otm") : "";
-
-                    return (
-                      <tr key={r.strike}>
-                        <td className={callClass}>{fmtPct(c?.iv)}</td>
-                        <td className={callClass}>{fmtDelta(c?.delta)}</td>
-                        <td className={callClass}>{fmtNum(c?.ask)}</td>
-                        <td className={callClass}>{fmtNum(c?.bid)}</td>
-                        <td className={callClass}>{fmtNum(c?.last)}</td>
-                        <td className={`strike-sticky ${isAt ? "strike-underlier" : ""}`}>{r.strike}</td>
-                        <td className={putClass}>{fmtNum(p?.last)}</td>
-                        <td className={putClass}>{fmtNum(p?.bid)}</td>
-                        <td className={putClass}>{fmtNum(p?.ask)}</td>
-                        <td className={putClass}>{fmtDelta(p?.delta)}</td>
-                        <td className={putClass}>{fmtPct(p?.iv)}</td>
-                      </tr>
-                    );
-                  })}
-                  {rows.length === 0 && (
-                    <tr>
-                      <td colSpan={11} style={{ textAlign: "center", padding: 24 }}>
-                        No data for this expiry.
-                      </td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                  return (
+                    <tr key={r.strike} className={isAt ? "strike-underlier-row" : ""}>
+                      <td className={callClass} data-label="Call IV %">{fmtPct(c?.iv)}</td>
+                      <td className={callClass} data-label="Call Delta">{fmtDelta(c?.delta)}</td>
+                      <td className={callClass} data-label="Call Ask">{fmtNum(c?.ask)}</td>
+                      <td className={callClass} data-label="Call Bid">{fmtNum(c?.bid)}</td>
+                      <td className={callClass} data-label="Call Last">{fmtNum(c?.last)}</td>
+                      <td className="strike-sticky" data-label="Strike">{r.strike}</td>
+                      <td className={putClass} data-label="Put Last">{fmtNum(p?.last)}</td>
+                      <td className={putClass} data-label="Put Bid">{fmtNum(p?.bid)}</td>
+                      <td className={putClass} data-label="Put Ask">{fmtNum(p?.ask)}</td>
+                      <td className={putClass} data-label="Put Delta">{fmtDelta(p?.delta)}</td>
+                      <td className={putClass} data-label="Put IV %">{fmtPct(p?.iv)}</td>
+                    </tr>
+                  );
+                })}
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={11} style={{ textAlign: "center", padding: 24 }}>
+                      No data for this expiry.
+                    </td></tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
