@@ -55,14 +55,10 @@
 .card-label { font-size: 12px; opacity: 0.75; margin-bottom: 4px; }
 .card-value { font-size: 18px; font-weight: 700; }
 
-/* Tables */
-.scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-.scroll-xy { overflow: auto; -webkit-overflow-scrolling: touch; }
-
+/* Tables (desktop/tablet default) */
 .yield-table, .options-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 700px; /* allow horizontal scroll on phones */
   font-size: 14px;
 }
 .yield-table th, .yield-table td,
@@ -71,17 +67,16 @@
   border-bottom: 1px solid #e5e7eb;
   white-space: nowrap;
 }
-
 .yields-grid { display: grid; gap: 12px; }
 .yield-card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; background: #fff; }
 .y-badge { background: #eef5ff; color: #084298; padding: 4px 8px; border-radius: 8px; }
 
-/* Options chain visuals (kept from your styles if present) */
+/* Options chain visuals */
 .call-itm  { background: #fff1f2; }
 .call-otm  { background: #ffffff; }
 .put-itm   { background: #eff6ff; }
 .put-otm   { background: #ffffff; }
-.strike-sticky { position: sticky; left: 50%; background: #ffffff; }
+.strike-sticky { background: #ffffff; }
 
 /* Tabs */
 .tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; }
@@ -99,32 +94,48 @@
 /* Errors */
 .error { color: crimson; margin-top: 8px; }
 
-/* ---------- Mobile tweaks ---------- */
+/* --------- Mobile: turn tables into cards (NO horizontal scroll) --------- */
 @media (max-width: 640px) {
   .container { padding: 16px; }
   .controls { flex-direction: column; align-items: stretch; }
-  .input { width: 100%; min-width: 0; }
-  .btn { width: 100%; }
+  .input, .btn { width: 100%; }
   .price-badge { align-self: flex-start; }
 
-  /* Slightly tighter table text on mobile */
-  .yield-table, .options-table { font-size: 13px; }
-  .yield-table th, .yield-table td,
-  .options-table th, .options-table td { padding: 8px; }
+  /* Cardify any table with .cardified */
+  .cardified thead { display: none; }
+  .cardified, .cardified tbody, .cardified tr, .cardified td {
+    display: block;
+    width: 100%;
+  }
+  .cardified tr {
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    background: #ffffff;
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+  .cardified td {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 12px;
+    white-space: normal; /* allow wrapping */
+  }
+  .cardified td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: #475569;
+    flex: 0 0 auto;
+    max-width: 55%;
+  }
+  .cardified td:last-child { border-bottom: 0; }
 
-  /* Hide low-priority columns on tiny screens (yields table):
-     Columns: 1 Strike, 2 DTE, 3 Bid, 4 Delta, 5 Yield, 6 Prob, 7 Yield Goal, 8 Vs goal
-     Hide Delta (4) + Yield Goal (7) on small screens
-  */
-  .yield-table th:nth-child(4), .yield-table td:nth-child(4) { display: none; }
-  .yield-table th:nth-child(7), .yield-table td:nth-child(7) { display: none; }
-
-  /* Options table is very wide; rely on horizontal scroll */
-  .options-table { min-width: 900px; }
+  /* Slightly smaller text inside cards */
+  .cardified { font-size: 13px; }
 }
 
-/* Even smaller phones */
+/* even smaller */
 @media (max-width: 380px) {
-  .yield-table { font-size: 12px; }
-  .yield-table th, .yield-table td { padding: 6px; }
+  .cardified { font-size: 12px; }
+  .cardified td { padding: 8px 10px; }
 }
