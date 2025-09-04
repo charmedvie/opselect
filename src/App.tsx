@@ -35,8 +35,8 @@ type ViewMode = "yields" | "chain" | null;
 /* ---------- Constants ---------- */
 const DTE_BUCKETS = [7, 14, 21, 30] as const;
 const MIN_PROB_OTM = 60; // %
-const DEFAULT_RISK_FREE = 0.04; // r (annualised)
-const DEFAULT_DIVIDEND_YIELD = 0.0; // q (annualised)
+const DEFAULT_RISK_FREE = 0.04;
+const DEFAULT_DIVIDEND_YIELD = 0.0;
 
 /* ---------- Utils ---------- */
 const nowMs = () => Date.now();
@@ -50,7 +50,7 @@ const fmt0 = (n?: number | null) =>
   typeof n === "number" && isFinite(n) ? String(Math.round(n)) : "—";
 const uniqKey = (r: YieldRow) => `${r.side}|${r.expiry}|${r.strike}`;
 
-/* ------ Yield goal ------ */
+/* Yield goal */
 function yieldGoalByDTE(dte: number): number {
   if (dte >= 22 && dte <= 31) return 0.40;
   if (dte >= 15 && dte <= 21) return 0.30;
@@ -58,7 +58,7 @@ function yieldGoalByDTE(dte: number): number {
   return 0.09;
 }
 
-/* ---------- Normal CDF / erf ---------- */
+/* Normal CDF / erf */
 function normCdf(x: number) { return 0.5 * (1 + erf(x / Math.SQRT2)); }
 function erf(x: number) {
   const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
@@ -67,7 +67,7 @@ function erf(x: number) {
   return sign * y;
 }
 
-/* ---------- Prob OTM (forward-based d2) ---------- */
+/* Prob OTM (forward-based d2) */
 function probOTM_forward(
   side: Side, S: number, K: number, ivFrac: number, Tyears: number, r = DEFAULT_RISK_FREE, q = DEFAULT_DIVIDEND_YIELD
 ): number | null {
@@ -80,7 +80,7 @@ function probOTM_forward(
   return side === "call" ? normCdf(-d2) : Nd2;
 }
 
-/* ---------- IV interpolation in log-moneyness ---------- */
+/* IV interpolation in log-moneyness */
 function interpolateIV_logMoneyness(
   S: number,
   points: Array<{ K: number; ivFrac: number }>,
@@ -121,7 +121,7 @@ export default function App() {
   const [view, setView] = useState<ViewMode>(null);
   const [dataTimestamp, setDataTimestamp] = useState<string | null>(null);
 
-  /* ---------- Actions ---------- */
+  /* Actions */
   const updateQuote = async (s: string) => {
     setErr("");
     try {
@@ -169,7 +169,7 @@ export default function App() {
     }
   };
 
-  /* ---------- Stock IV estimate ---------- */
+  /* Stock IV estimate */
   const stockIvPct = useMemo(() => {
     if (!expiries.length || uPrice == null) return null;
     const now = nowMs();
@@ -203,7 +203,7 @@ export default function App() {
     return Math.round((ivs.reduce((a, b) => a + b, 0) / ivs.length) * 100) / 100;
   }, [expiries, uPrice]);
 
-  /* ---------- Top Yields (PUTS ONLY) ---------- */
+  /* Top Yields (PUTS ONLY) */
   const topPuts = useMemo(() => {
     if (!expiries.length || uPrice == null) return null;
 
@@ -232,7 +232,7 @@ export default function App() {
 
       const Tyears = Math.max(1 / 365, near.dte / 365);
 
-      // Build IV points for this expiry (mean across strikes)
+      // Build IV points for this expiry (average by strike)
       const ivPoints: Array<{ K: number; ivFrac: number }> = [];
       {
         const tmp = new Map<number, number[]>();
@@ -293,7 +293,7 @@ export default function App() {
     return out.sort((a, b) => b.yieldPct - a.yieldPct).slice(0, 10);
   }, [expiries, uPrice]);
 
-  /* ---------- Row gradient (soft greens) ---------- */
+  /* Row gradient (soft greens) */
   function rowStyle(v: number, min: number, max: number) {
     const clamp = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));
     const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -303,7 +303,7 @@ export default function App() {
     return { background: `hsl(140 ${s}% ${l}%)` } as const;
   }
 
-  /* ---------- Chain rows ---------- */
+  /* Chain rows */
   const rows = useMemo(() => {
     const ex = expiries[activeIdx];
     if (!ex) return [] as { strike: number; call: OptionSide | null; put: OptionSide | null }[];
@@ -355,7 +355,7 @@ export default function App() {
       {err && <p className="error">{err}</p>}
       {chainErr && <p className="error">{chainErr}</p>}
 
-      {/* ---- Yields: PUTS ONLY ---- */}
+      {/* ---- Yields: PUTS ONLY (cards on mobile, table on desktop) ---- */}
       {view === "yields" && topPuts && uPrice != null && (
         <div className="yields-panel">
           <div className="y-meta">
@@ -414,7 +414,7 @@ export default function App() {
             })()}
           </div>
 
-          {/* Mobile card list (no scroll, no headers) */}
+          {/* Mobile card list (no scroll) */}
           <div className="show-on-mobile">
             {(() => {
               const puts = topPuts ?? [];
@@ -425,30 +425,14 @@ export default function App() {
                 <div className="card-list">
                   {puts.map((r) => (
                     <div className="mcard" key={`mp-${r.expiry}-${r.strike}`} style={rowStyle(r.vsGoalBps, min, max)}>
-                      <div className="row">
-                        <div className="k">Strike</div><div className="v">{r.strike}</div>
-                      </div>
-                      <div className="row">
-                        <div className="k">DTE</div><div className="v">{r.dte}</div>
-                      </div>
-                      <div className="row">
-                        <div className="k">Bid</div><div className="v">{fmtNum(r.bid)}</div>
-                      </div>
-                      <div className="row">
-                        <div className="k">Delta</div><div className="v">{fmtDelta(r.delta)}</div>
-                      </div>
-                      <div className="row">
-                        <div className="k">Yield</div><div className="v">{fmtPct(r.yieldPct)}%</div>
-                      </div>
-                      <div className="row">
-                        <div className="k">Prob OTM</div><div className="v">{fmt0(r.probOTM)}%</div>
-                      </div>
-                      <div className="row">
-                        <div className="k">Yield Goal</div><div className="v">{fmtPct(r.yieldGoalPct)}%</div>
-                      </div>
-                      <div className="row">
-                        <div className="k">Vs goal</div><div className="v">{(Math.round(r.vsGoalBps) >= 0 ? "+" : "") + Math.round(r.vsGoalBps)} bps</div>
-                      </div>
+                      <div className="row"><div className="k">Strike</div><div className="v">{r.strike}</div></div>
+                      <div className="row"><div className="k">DTE</div><div className="v">{r.dte}</div></div>
+                      <div className="row"><div className="k">Bid</div><div className="v">{fmtNum(r.bid)}</div></div>
+                      <div className="row"><div className="k">Delta</div><div className="v">{fmtDelta(r.delta)}</div></div>
+                      <div className="row"><div className="k">Yield</div><div className="v">{fmtPct(r.yieldPct)}%</div></div>
+                      <div className="row"><div className="k">Prob OTM</div><div className="v">{fmt0(r.probOTM)}%</div></div>
+                      <div className="row"><div className="k">Yield Goal</div><div className="v">{fmtPct(r.yieldGoalPct)}%</div></div>
+                      <div className="row"><div className="k">Vs goal</div><div className="v">{(Math.round(r.vsGoalBps) >= 0 ? "+" : "") + Math.round(r.vsGoalBps)} bps</div></div>
                     </div>
                   ))}
                 </div>
@@ -458,10 +442,11 @@ export default function App() {
         </div>
       )}
 
-      {/* ---- Chain (desktop table + mobile cards) ---- */}
+      {/* ---- Options Chain: desktop/tablet table; mobile = dropdown + horizontal scroll table ---- */}
       {view === "chain" && expiries.length > 0 && (
         <div style={{ marginTop: 16 }}>
-          <div className="tabs">
+          {/* Desktop/Tablet: tabs */}
+          <div className="tabs hide-on-mobile">
             {expiries.map((ex: ExpirySlice, i: number) => (
               <button
                 key={ex.expiry + i}
@@ -474,6 +459,21 @@ export default function App() {
             ))}
           </div>
 
+          {/* Mobile: dropdown selector */}
+          <div className="show-on-mobile">
+            <label className="select-label" htmlFor="expirySelect">Expiry</label>
+            <select
+              id="expirySelect"
+              className="select"
+              value={activeIdx}
+              onChange={(e) => setActiveIdx(Number(e.target.value))}
+            >
+              {expiries.map((ex: ExpirySlice, i: number) => (
+                <option key={ex.expiry + i} value={i}>{formatExpiry(ex.expiry)}</option>
+              ))}
+            </select>
+          </div>
+
           <div className="y-meta">
             Data timestamp: <strong>{dataTimestamp ?? new Date().toLocaleString()}</strong>
           </div>
@@ -484,9 +484,9 @@ export default function App() {
             </div>
           )}
 
-          {/* Desktop/tablet table */}
-          <div className="hide-on-mobile">
-            <table className="options-table">
+          {/* Always a table for chain; allow horizontal scroll on mobile */}
+          <div className="options-wrap scroll-xy">
+            <table className="options-table minwide">
               <thead>
                 <tr>
                   <th colSpan={5}>Calls</th>
@@ -534,27 +534,6 @@ export default function App() {
                 )}
               </tbody>
             </table>
-          </div>
-
-          {/* Mobile card list */}
-          <div className="show-on-mobile">
-            <div className="card-list">
-              {rows.map((r) => {
-                const c = r.call, p = r.put;
-                return (
-                  <div className="mcard" key={`mc-${r.strike}`}>
-                    <div className="row"><div className="k">Strike</div><div className="v">{r.strike}</div></div>
-                    <div className="row"><div className="k">Call IV</div><div className="v">{fmtPct(c?.iv)}%</div></div>
-                    <div className="row"><div className="k">Call Δ</div><div className="v">{fmtDelta(c?.delta)}</div></div>
-                    <div className="row"><div className="k">Call Bid/Ask</div><div className="v">{fmtNum(c?.bid)} / {fmtNum(c?.ask)}</div></div>
-                    <div className="row"><div className="k">Put Bid/Ask</div><div className="v">{fmtNum(p?.bid)} / {fmtNum(p?.ask)}</div></div>
-                    <div className="row"><div className="k">Put Δ</div><div className="v">{fmtDelta(p?.delta)}</div></div>
-                    <div className="row"><div className="k">Put IV</div><div className="v">{fmtPct(p?.iv)}%</div></div>
-                  </div>
-                );
-              })}
-              {rows.length === 0 && <div className="empty">No data for this expiry.</div>}
-            </div>
           </div>
         </div>
       )}
