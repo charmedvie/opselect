@@ -120,13 +120,23 @@ function interpolateIV_logMoneyness(
   return null;
 }
 
+/* ---------- Gradient for Vs Goal (M) ---------- */
+function rowStyleMonthly(vsGoalMBps: number, min: number, max: number) {
+  const clamp = (x: number, a: number, b: number) =>
+    Math.min(b, Math.max(a, x));
+  const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+  const t = max > min ? clamp((vsGoalMBps - min) / (max - min), 0, 1) : 0.5;
+  const l = lerp(96, 86, t);
+  const s = lerp(28, 40, t);
+  return { background: `hsl(140 ${s}% ${l}%)` } as const;
+}
+
 /* ---------- Component ---------- */
 export default function App() {
   const [symbol, setSymbol] = useState("");
   const [price, setPrice] = useState<number | null>(null);
   const [currency, setCurrency] = useState<string | null>(null);
   const [err, setErr] = useState("");
-
   const [loading, setLoading] = useState(false);
   const [expiries, setExpiries] = useState<ExpirySlice[]>([]);
   const [uPrice, setUPrice] = useState<number | null>(null);
@@ -158,9 +168,7 @@ export default function App() {
     if (!res.ok) throw new Error(text);
     const json = JSON.parse(text);
     if (!json?.expiries?.length) throw new Error("No options data found.");
-    setUPrice(
-      typeof json.underlierPrice === "number" ? json.underlierPrice : null
-    );
+    setUPrice(typeof json.underlierPrice === "number" ? json.underlierPrice : null);
     setExpiries(json.expiries);
   };
 
@@ -319,7 +327,6 @@ export default function App() {
         )}
       </div>
 
-      {/* Errors */}
       {err && <p className="error">{err}</p>}
 
       {/* ---- Yields Table ---- */}
@@ -344,26 +351,35 @@ export default function App() {
               </tr>
             </thead>
             <tbody>
-              {topPuts.map((r) => {
-                const yieldM = r.dte > 0 ? r.yieldPct * (30 / r.dte) : 0;
-                const vsGoalMBps = (yieldM - 0.40) * 100;
-                return (
-                  <tr key={`p-${r.expiry}-${r.strike}`}>
-                    <td style={{ textAlign: "left" }}>{r.strike}</td>
-                    <td>{r.dte}</td>
-                    <td>{formatExpiry(r.expiry)}</td>
-                    <td>{fmtDelta(r.delta)}</td>
-                    <td>{fmtNum(r.bid)}</td>
-                    <td>{fmtPct(yieldM)}%</td>
-                    <td>
-                      {(Math.round(vsGoalMBps) >= 0 ? "+" : "") +
-                        Math.round(vsGoalMBps) +
-                        " bps"}
-                    </td>
-                    <td>{fmt0(r.probOTM)}%</td>
-                  </tr>
-                );
-              })}
+              {(() => {
+                const puts = topPuts ?? [];
+                let min = Infinity, max = -Infinity;
+                const calcVs = (r: YieldRow) =>
+                  ((r.dte > 0 ? r.yieldPct * (30 / r.dte) : 0) - 0.40) * 100;
+                for (const r of puts) {
+                  const v = calcVs(r);
+                  if (v < min) min = v;
+                  if (v > max) max = v;
+                }
+                if (!isFinite(min) || !isFinite(max)) { min = 0; max = 0; }
+
+                return puts.map((r) => {
+                  const yieldM = r.dte > 0 ? r.yieldPct * (30 / r.dte) : 0;
+                  const vsGoalMBps = (yieldM - 0.40) * 100;
+                  return (
+                    <tr key={`p-${r.expiry}-${r.strike}`} style={rowStyleMonthly(vsGoalMBps, min, max)}>
+                      <td style={{ textAlign: "left" }}>{r.strike}</td>
+                      <td>{r.dte}</td>
+                      <td>{formatExpiry(r.expiry)}</td>
+                      <td>{fmtDelta(r.delta)}</td>
+                      <td>{fmtNum(r.bid)}</td>
+                      <td>{fmtPct(yieldM)}%</td>
+                      <td>{(Math.round(vsGoalMBps) >= 0 ? "+" : "") + Math.round(vsGoalMBps) + " bps"}</td>
+                      <td>{fmt0(r.probOTM)}%</td>
+                    </tr>
+                  );
+                });
+              })()}
             </tbody>
           </table>
         </div>
